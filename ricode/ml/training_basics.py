@@ -1,0 +1,395 @@
+import collections
+import dataclasses
+import itertools
+import json
+import logging
+import pathlib
+from abc import ABC
+from pathlib import Path
+from typing import Any, ClassVar, Generic, Mapping, Optional, OrderedDict, TypeVar
+
+import torch
+import typing_extensions
+
+try:
+    from torch.utils.tensorboard import SummaryWriter
+
+    TENSORBOARD = True
+except ImportError as ie:
+    TENSORBOARD = False
+    SummaryWriter = None  # type: ignore
+
+
+def merge_update(base: dict, update: dict):
+    output = dict()
+    keys = set(base.keys()) | set(update.keys())
+    for k in keys:
+        v = base.get(k, None)
+        update_v = update.get(k, None)
+        if k not in base and update_v is None:
+            continue
+        if isinstance(v, dict):
+            assert update_v is None or isinstance(update_v, dict)
+            update_v = update_v or dict()
+            output[k] = merge_update(v, update_v)
+        else:
+            output[k] = update_v if update_v is not None else v
+    return output
+
+
+def pad_to_length(inp: str) -> str:
+    return inp.rjust(12)
+
+
+def format_tensor(values: torch.Tensor):
+    fmt = "%.6f"
+    if not values.dtype.is_floating_point:
+        fmt = "%d"
+    return "[" + ", ".join([pad_to_length(fmt % (elem,)) for elem in values]) + "]"
+
+
+T = TypeVar("T", bound="NameableConfig")
+
+
+class NameableConfig(ABC):
+    section_name: ClassVar[Optional[str]] = None
+    with_filepath: ClassVar[bool] = False
+
+    @classmethod
+    def from_name(
+        cls: type[T],
+        name: str | pathlib.Path,
+        /,
+        section_name=None,
+        setup=False,
+        overrides=None,
+        **init_kwargs,
+    ) -> T:
+        if isinstance(name, pathlib.Path):
+            name = name.as_posix()
+
+        section_name = section_name if section_name is not None else cls.section_name
+        config = cls.load_from_name(name)
+        kwargs = config[section_name]
+        if cls.with_filepath:
+            kwargs["file_path"] = name
+
+        # apply overrides specified via config files ("mixins")
+        if overrides is not None:
+            for override in overrides:
+                override_config = cls.load_from_name(override)
+                if section_name in override_config:
+                    kwargs = merge_update(kwargs, override_config[section_name])
+
+        # apply overrides specified via kwargs
+        kwargs = merge_update(kwargs, init_kwargs)
+
+        # create a new config / whatever type class from the kwargs!
+        conf = cls(**kwargs)
+
+        # todo: rename setup_dataset
+        if setup and hasattr(conf, "setup_dataset"):
+            conf.setup_dataset()
+        return conf
+
+    @classmethod
+    def load_from_name(cls, name: str):
+        assert cls.section_name is not None
+        config_path = cls.find_config(name)
+        with config_path.open() as f:
+            config = json.load(f)
+        if "base" in config:
+            baseconfig = cls.load_from_name(config["base"])
+            config = merge_update(baseconfig, config)
+        return config
+
+    @classmethod
+    def find_config(cls, name: str | Path) -> Path:
+        if isinstance(name, Path) and name.exists():
+            return name
+        elif isinstance(name, Path):
+            name = name.absolute().as_posix()
+        if not name.endswith(".json"):
+            name = name + ".json"
+        path = Path(name)
+        local_path = Path().cwd() / "cfg" / name
+        if path.exists():
+            return path
+        elif local_path.exists():
+            return local_path
+        raise ValueError(
+            f"Cannot find config '{name}' as a path or as a local config ({local_path.as_posix()})"
+        )
+
+
+@dataclasses.dataclass(kw_only=True)
+class BasicHparams(NameableConfig):
+    section_name = "training"
+    with_filepath = False
+
+    num_epochs: int
+    max_epochs: int
+    optimize_for: str
+    patience: int = 0
+    batch_size: int
+    gradient_accumulation: int = 1
+    eval_every_n_epochs: int = 1
+    d_ff: int = 1
+
+    def to_json(self):
+        return json.dumps(self.__dict__, indent=2)
+
+
+class BasicMetrics:
+    ignore_in_repr: ClassVar[set[str] | None] = None
+    include_in_repr: ClassVar[set[str] | None] = None
+
+    def __init__(self, **kwargs):
+        if kwargs:
+            for key, value in kwargs.items():
+                setattr(self, key, value)
+
+    @classmethod
+    def from_dict(cls, inp: Mapping[str, Any]) -> typing_extensions.Self:
+        return cls(**inp)
+
+    def to_dict(self):
+        return self.__dict__
+
+    def __repr__(self):
+        inner = list()
+        for key, value in self.__dict__.items():
+            if key in (self.__class__.ignore_in_repr or set()):
+                continue
+            if (
+                self.__class__.include_in_repr
+                and key not in self.__class__.include_in_repr
+            ):
+                continue
+            if value is None:
+                continue
+            elif isinstance(value, torch.Tensor):
+                if value.numel() > 1:
+                    dims = value.dim()
+                    if dims > 1:
+                        inner_inner = list()
+                        inner_inner.append(f"{key}={'[' * (dims - 1)}\n")
+                        for indices in itertools.product(
+                            *[range(value.size(dim)) for dim in range(dims - 1)]
+                        ):
+                            inner_inner.append(f"\t{format_tensor(value[indices])},\n")
+                        inner_inner.append("]" * (dims - 1))
+                        inner.append("".join(inner_inner))
+                    else:
+                        inner.append(f"{key}={format_tensor(value)}")
+                    continue
+                value = value.item()
+            elif not isinstance(value, float):
+                inner.append(f"{key}={value}")
+                continue
+            inner.append(f"{key}={value:.6f}")
+        return f"{{{', '.join(inner)}}}"
+
+    def __str__(self):
+        return self.__repr__()
+
+    def __invert__(self):
+        for key, value in self.__dict__.items():
+            if isinstance(value, (float, torch.Tensor)):
+                if "loss" in key:
+                    self.__dict__[key] = -self.__dict__[key]
+                else:  # metrics (f1 etc)
+                    self.__dict__[key] = 1 - self.__dict__[key]
+
+        return self
+
+
+M = TypeVar("M", bound=BasicMetrics)
+
+
+class MetricsDict(Generic[M], BasicMetrics):
+    metrics: "OrderedDict[str, M | MetricsDict[M]]"
+
+    def __init__(self, primary: Optional[str] = None, **kwargs: "M | MetricsDict[M]"):
+        super().__init__()
+        self.primary_metrics = primary
+        self.metrics = collections.OrderedDict(kwargs)
+
+    def __getitem__(self, item) -> "M | MetricsDict[M]":
+        return self.metrics[item]
+
+    def __contains__(self, item: str):
+        return item in self.metrics
+
+    def first(self):
+        for _, value in self.metrics.items():
+            return value
+        raise ValueError(f"Empty {self}")
+
+    def __getattr__(self, item):
+        if hasattr(self.first(), item):
+            return {key: getattr(value, item) for key, value in self.metrics.items()}
+        return super().__getattribute__(item)  # todo check getattr or getattribute
+
+    def to_dict(self):
+        dicts = {k: metric.to_dict() for k, metric in self.metrics.items()}
+        target = dict()
+        for elem_key, elem in dicts.items():
+            for k, v in elem.items():
+                target[elem_key + "__" + k] = v
+        return target
+
+    def __repr__(self):
+        inner = list()
+        for key, value in self.metrics.items():
+            if key in (self.__class__.ignore_in_repr or set()):
+                continue
+
+            value_repr = repr(value)
+            value_repr = prepend_newlines_with_spacing(value_repr, "  ")
+            inner.append(f"  {key}={value_repr}")
+        breaker = ",\n"
+        return f"{{\n{breaker.join(inner)}\n}}"
+
+
+def prepend_newlines_with_spacing(s: str, spacing: str) -> str:
+    s = s.replace("\n", "\n" + spacing)
+    return s
+
+
+def _filter_hparams(hparams: dict[str, Any]):
+    logger = logging.getLogger("_filter_hparams")
+
+    def _instance_check(k: str, x: Any) -> bool:
+        if isinstance(x, (int, float, str, bool, torch.Tensor)):
+            return True
+        logger.warning(
+            f"Cannot log hyperparameter {k} ({x}), must be int, float, str, bool or torch.Tensor, got {type(x)}"
+        )
+        return False
+
+    return {key: value for key, value in hparams.items() if _instance_check(key, value)}
+
+
+class TensorboardLogger:
+    _writer: Optional[SummaryWriter] = None
+    hparams: dict
+
+    def __init__(
+        self,
+        log_dir: str,
+        hparams: Optional[dict[str, Any]] = None,
+        disable: bool = False,
+    ):
+        self.noop = not TENSORBOARD or disable
+        if not self.noop:
+            self._writer = SummaryWriter(log_dir)
+        self.hparams = hparams or dict()
+
+    def add_hparams(self, hparams: Mapping[str, Any]):
+        self.hparams.update(hparams)
+
+    @property
+    def writer(self):
+        if self._writer is None:
+            raise ValueError(f"{self.noop=}")
+        return self._writer
+
+    def log_metric(
+        self,
+        name: str,
+        scalar_value: int | float | torch.Tensor,
+        global_step=None,
+    ):
+        if self.noop:
+            return
+
+        if isinstance(scalar_value, (int, float)) or (
+            isinstance(scalar_value, torch.Tensor) and scalar_value.numel() == 1
+        ):
+            self.writer.add_scalar(
+                name,
+                scalar_value,
+                global_step,
+            )
+        else:
+            if isinstance(scalar_value, tuple) and all(
+                isinstance(elem, torch.Tensor) for elem in scalar_value
+            ):
+                scalar_value = torch.tensor(scalar_value)
+
+            if not isinstance(scalar_value, torch.Tensor):
+                raise ValueError(
+                    f"scalar_value '{name}' must be a torch.Tensor, "
+                    f"but is {type(scalar_value)}: {scalar_value}"
+                )
+            self.writer.add_tensor(
+                name,
+                scalar_value,
+                global_step,
+            )
+
+    def log_metrics(
+        self,
+        metrics: Mapping[str, int | float | torch.Tensor],
+        global_step=None,
+    ):
+        for name, scalar_value in metrics.items():
+            self.log_metric(name, scalar_value, global_step)
+
+    def log_test_metrics(
+        self,
+        hparams: dict[str, int | float | bool | str],
+        metrics: dict[str, int | float | torch.Tensor],
+    ):
+        self.add_hparams(hparams)
+
+        if self.noop:
+            return
+
+        metrics = {
+            key: value
+            for key, value in metrics.items()
+            if (
+                (not isinstance(value, torch.Tensor) or value.numel() == 1)
+                and isinstance(value, (bool, int, float, torch.Tensor))
+            )
+        }
+
+        self._add_hparams(
+            self.hparams,
+            metrics,
+            global_step=0,
+        )
+        self.writer.add_custom_scalars(
+            {
+                "RocketLeague": {
+                    "ballchase": ["Multiline", ["precision", "recall", "f1"]]
+                }
+            }
+        )
+
+    def _add_hparams(
+        self,
+        hparam_dict: dict,
+        metric_dict: dict,
+        global_step: Optional[int] = None,
+    ):
+        if type(hparam_dict) is not dict or type(metric_dict) is not dict:
+            raise TypeError("hparam_dict and metric_dict should be dictionary.")
+        exp, ssi, sei = torch.utils.tensorboard.writer.hparams(
+            _filter_hparams(hparam_dict), metric_dict, None
+        )
+
+        self.writer.file_writer.add_summary(exp, global_step)
+        self.writer.file_writer.add_summary(ssi, global_step)
+        self.writer.file_writer.add_summary(sei, global_step)
+        for k, v in metric_dict.items():
+            self.writer.add_scalar(k, v, global_step)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if self.writer is not None:
+            self.writer.close()
