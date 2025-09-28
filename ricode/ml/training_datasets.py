@@ -124,7 +124,6 @@ def _resolve_split_info(value: Any):  # value is str or dict[str, str]
 class BasicDataset(NameableConfig):
     with_filepath: ClassVar[bool] = True
     storage_prefix: ClassVar[str] = ""
-    precomputed_pair_flags: ClassVar[bool] = False
     split_names: ClassVar[set[str]] = {"train", "test", "eval"}
     use_multiprocessing: ClassVar[bool] = False
     use_shards: ClassVar[bool] = True
@@ -445,8 +444,8 @@ class BasicDataset(NameableConfig):
             )
             if (
                 self.use_shards
-                and len(dataset) > self.shard_size
                 and isinstance(dataset, (SafetensorsDataset, SafetensorsDict))
+                and len(dataset) > self.shard_size
             ):
                 dataset = dataset.shard(self.shard_size, preprocess_if_unprocessed=True)
             if not self.memory_only:
@@ -598,13 +597,15 @@ def is_proxy_dataset(dataset: Any, inner_class: Optional[type] = None):
 
 
 class HuggingfaceDataset(BasicDataset):
-    def __init__(self):
+    use_shards = False
+
+    def __init__(self, **kwargs):
         if not DATASETS:
             raise ValueError(
                 f'Using {self.__class__.__name__} requires installing the "datasets" library, '
                 f'available via "pip install datasets"'
             )
-        super().__init__()
+        super().__init__(**kwargs)
 
     def _load_split_data(self, split: str, split_info: SplitInfo):
         if load is None:
@@ -636,3 +637,20 @@ class HuggingfaceDataset(BasicDataset):
                 return filename + ".safetensors"
             return filename
         return hf_path
+
+    def setup_examples(
+        self, split: str, split_info: SplitInfo, data: Any
+    ) -> SafetensorsDataset:
+        return data
+
+
+class StreamingHuggingfaceDataset(HuggingfaceDataset):
+    force_setup: Optional[bool] = False
+    memory_only: Optional[bool] = True
+
+    def _load_split_data(self, split: str, split_info: SplitInfo):
+        if load is None:
+            raise ImportError("datasets library is not available")
+        return load.load_dataset(
+            self.name, split=split_info.name_or_file, streaming=True
+        )

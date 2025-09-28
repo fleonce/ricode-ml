@@ -541,7 +541,13 @@ def get_training_steps(
         )
 
     epoch_dataloader = setup_dataloader(args, "train", False)
-    steps_per_epoch = len(epoch_dataloader)
+
+    try:
+        steps_per_epoch = len(epoch_dataloader)
+    except TypeError:
+        if not isinstance(args.hparams, StepBasedTraining):
+            raise
+        steps_per_epoch = args.hparams.num_steps
 
     if isinstance(args.hparams, StepBasedTraining):
         args.hparams.patience *= args.hparams.eval_every_n_steps
@@ -704,9 +710,9 @@ def do_train(
     model_class: type[TModel],
     config_class: type[TConfig],
     evaluate_fn: EvaluateProtocol[TModel, TDataset, THparams, TMetrics],
-    config_init_fn: ConfigInitProtocol[TDataset, THparams, TConfig],
     optimizer_fn: OptimizerInitProtocol[TModel, TDataset, THparams],
     dataloader_fn: DataLoaderProtocol[TDataset, THparams],
+    config_init_fn: ConfigInitProtocol[TDataset, THparams, TConfig] | None = None,
     step_fn: ForwardBackwardProtocol[TModel, THparams, TDataset] = forward_backward,
     transformer: Optional[str] = None,
     model_path: Optional[str] = None,

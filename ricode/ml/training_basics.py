@@ -10,6 +10,8 @@ from typing import Any, ClassVar, Generic, Mapping, Optional, OrderedDict, TypeV
 
 import torch
 import typing_extensions
+from torch import Tensor
+from typing_extensions import Self
 
 try:
     from torch.utils.tensorboard import SummaryWriter
@@ -127,11 +129,11 @@ class BasicHparams(NameableConfig):
     section_name = "training"
     with_filepath = False
 
-    num_epochs: int
-    max_epochs: int
-    optimize_for: str
+    num_epochs: int = 1
+    max_epochs: int = 1
+    optimize_for: str = "accuracy"
     patience: int = 0
-    batch_size: int
+    batch_size: int = 2
     gradient_accumulation: int = 1
     eval_every_n_epochs: int = 1
     d_ff: int = 1
@@ -393,3 +395,46 @@ class TensorboardLogger:
     def __exit__(self, exc_type, exc_val, exc_tb):
         if self.writer is not None:
             self.writer.close()
+
+
+def _to_device(
+    inp: Any, device: torch.device | str | int, non_blocking: Optional[bool] = None
+):
+    if isinstance(inp, Tensor):
+        copy_non_blocking = non_blocking
+        if copy_non_blocking is None:
+            copy_non_blocking = inp.is_pinned()
+        return inp.to(device, non_blocking=copy_non_blocking)
+    elif isinstance(inp, (list, set, tuple)):
+        return type(inp)(_to_device(val, device, non_blocking) for val in inp)
+    return inp
+
+
+class Batch(dict[str, Tensor]):
+    def to(self, device, non_blocking: Optional[bool] = None) -> Self:
+        for key, tensor in self.items():
+            self[key] = _to_device(tensor, device, non_blocking)
+        return self
+
+    def with_prefix(self, prefix: str):
+        out = self.__class__()
+        for k, v in self.items():
+            out[prefix + k] = v
+        return out
+
+    def rename(self, key: str, new_key: str):
+        copy = Batch(self)
+        value = copy.pop(key)
+        copy[new_key] = value
+        return copy
+
+    def __copy__(self):
+        return Batch(self)
+
+    def __setattr__(self, key: str, value: Tensor):
+        self[key] = value
+
+    def __getattr__(self, item: str) -> Tensor:
+        if item in {"__getstate__", "__setstate__"}:
+            return super().__getattribute__(item)
+        return self[item]

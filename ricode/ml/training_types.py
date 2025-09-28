@@ -23,10 +23,10 @@ from torch import Generator
 from torch.utils.data import DataLoader
 from transformers import PreTrainedModel
 
-from ricode.ml.dataloaders import Batch
 from ricode.ml.training_basics import (
     BasicHparams,
     BasicMetrics,
+    Batch,
     MetricsDict,
     TensorboardLogger,
 )

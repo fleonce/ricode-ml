@@ -1,63 +1,18 @@
 import sys
 import time
 import warnings
-from typing import Any, Callable, Optional, Protocol, Sequence, TypeAlias, TypeVar
+from typing import Callable, Optional, Protocol, Sequence, TypeAlias, TypeVar
 
 import torch
 from more_itertools.recipes import flatten
-from torch import Tensor
 from torch.nn.utils.rnn import pad_sequence
-from torch.utils.data import DataLoader, DistributedSampler
-from typing_extensions import Self
+from torch.utils.data import DataLoader, DistributedSampler, IterableDataset
 
-from ricode.ml.training_basics import BasicHparams
+from ricode.ml.training_basics import BasicHparams, Batch
 from ricode.ml.training_types import HasDatasetProperties, SupportsNext, TrainingArgs
 
 _T_dataset = TypeVar("_T_dataset", bound=HasDatasetProperties)
 _T_hparams = TypeVar("_T_hparams", bound=BasicHparams)
-
-
-def _to_device(
-    inp: Any, device: torch.device | str | int, non_blocking: Optional[bool] = None
-):
-    if isinstance(inp, Tensor):
-        copy_non_blocking = non_blocking
-        if copy_non_blocking is None:
-            copy_non_blocking = inp.is_pinned()
-        return inp.to(device, non_blocking=copy_non_blocking)
-    elif isinstance(inp, (list, set, tuple)):
-        return type(inp)(_to_device(val, device, non_blocking) for val in inp)
-    return inp
-
-
-class Batch(dict[str, Tensor]):
-    def to(self, device, non_blocking: Optional[bool] = None) -> Self:
-        for key, tensor in self.items():
-            self[key] = _to_device(tensor, device, non_blocking)
-        return self
-
-    def with_prefix(self, prefix: str):
-        out = self.__class__()
-        for k, v in self.items():
-            out[prefix + k] = v
-        return out
-
-    def rename(self, key: str, new_key: str):
-        copy = Batch(self)
-        value = copy.pop(key)
-        copy[new_key] = value
-        return copy
-
-    def __copy__(self):
-        return Batch(self)
-
-    def __setattr__(self, key: str, value: Tensor):
-        self[key] = value
-
-    def __getattr__(self, item: str) -> Tensor:
-        if item in {"__getstate__", "__setstate__"}:
-            return super().__getattribute__(item)
-        return self[item]
 
 
 CollateFunction: TypeAlias = Callable[[list[dict[str, torch.Tensor]]], Batch]
@@ -116,6 +71,7 @@ def setup_dataloader(
     # when we have lots of data, moving from pinned memory->gpu can speed up the transfer to the gpu
     pin_memory: bool = False,
     batch_size: Optional[int] = None,
+    num_workers: int = 0,
 ) -> DataLoader:
     if not isinstance(args.dataset, HasDatasetProperties):
         raise ValueError(
@@ -127,14 +83,19 @@ def setup_dataloader(
     if batch_size is None:
         batch_size = args.hparams.batch_size
 
+    do_shuffle = train is True
+    if isinstance(args.dataset[split], IterableDataset):
+        do_shuffle = False
+
     dataloader_kwargs = {
         "batch_size": batch_size,
         "collate_fn": collate_fn,
         "dataset": args.dataset[split],
-        "shuffle": train,
+        "shuffle": do_shuffle,
         "generator": args.generator,
         "drop_last": train is True and args.use_fsdp,
         "pin_memory": pin_memory,
+        "num_workers": num_workers,
     }
     if args.use_fsdp:
         shuffle = dataloader_kwargs.pop("shuffle")
