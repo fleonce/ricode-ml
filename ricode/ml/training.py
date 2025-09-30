@@ -925,7 +925,7 @@ def do_train(
                 batch_size = first(cpu_batch.values()).size(0)
 
                 batch = cpu_batch.to(device, non_blocking=None)
-                loss_tensor = step_fn(
+                loss_info = step_fn(
                     model,
                     args,
                     batch,
@@ -933,6 +933,10 @@ def do_train(
                     compute_loss_context_mngr,
                     logger,
                 )
+                if isinstance(loss_info, MutableMapping):
+                    loss_tensor = loss_info.pop("loss")
+                else:
+                    loss_tensor = loss_info
 
                 if do_profile and ((args.train_steps + 1) % 3 == 0):
                     stop_after_epoch = True
@@ -978,6 +982,10 @@ def do_train(
                         g_norm=g_norm,
                         tokens=postfix["tokens"] + global_tokens,
                     )
+
+                    if isinstance(loss_info, Mapping):
+                        postfix.update(loss_info)
+
                     if do_profile:
                         postfix.update(dl=dataloader.step_time)
 

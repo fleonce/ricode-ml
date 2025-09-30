@@ -8,6 +8,7 @@ from typing import (
     Dict,
     Generic,
     Mapping,
+    MutableMapping,
     Optional,
     ParamSpec,
     Protocol,
@@ -15,6 +16,7 @@ from typing import (
     Tuple,
     TypeAlias,
     TypeVar,
+    Union,
 )
 
 import torch
@@ -248,7 +250,7 @@ class ForwardBackwardProtocol(Protocol[TModel, THparams, TDataset]):
         device: torch.device | str,
         compute_context: AbstractContextManager | None,
         logger: logging.Logger,
-    ) -> torch.Tensor: ...
+    ) -> Union[torch.Tensor, MutableMapping[str, torch.Tensor]]: ...
 
 
 _U = TypeVar("_U")
