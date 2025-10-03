@@ -867,6 +867,9 @@ def do_train(
         num_training_steps=total_steps,
     )
 
+    args.optimizer = optimizer
+    args.lr_scheduler = lr_scheduler
+
     if load_ckpt:
         args.train_steps, args.epoch, _best_score = load_checkpoint(
             device,

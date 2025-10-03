@@ -201,6 +201,26 @@ class TrainingArgs(Generic[THparams, TDataset]):
 
         return distributed_world_size()
 
+    @property
+    def optimizer(self) -> torch.optim.Optimizer:
+        if not hasattr(self, "_optimizer"):
+            raise ValueError
+        return getattr(self, "_optimizer")
+
+    @property
+    def lr_scheduler(self) -> torch.optim.lr_scheduler.LRScheduler:
+        if not hasattr(self, "_lr_scheduler"):
+            raise ValueError
+        return getattr(self, "_lr_scheduler")
+
+    @lr_scheduler.setter
+    def lr_scheduler(self, scheduler: torch.optim.lr_scheduler.LRScheduler):
+        setattr(self, "_lr_scheduler", scheduler)
+
+    @optimizer.setter
+    def optimizer(self, optimizer: torch.optim.Optimizer):
+        setattr(self, "_optimizer", optimizer)
+
 
 # ModelInitProtocol = Callable[[TConfig], TModel]
 
