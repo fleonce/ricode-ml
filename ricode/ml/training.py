@@ -1,6 +1,7 @@
 import collections
 import contextlib
 import functools
+import gc
 import json
 import logging
 import math
@@ -627,6 +628,7 @@ def do_evaluate(
 ):
     logger = logging.getLogger("do_evaluate")
 
+    gc.collect()
     torch.cuda.empty_cache()
     time.sleep(0.1)
     torch.cuda.empty_cache()
@@ -635,7 +637,10 @@ def do_evaluate(
     old_state = model.training
     model.eval()
 
-    metrics = _call_evaluate_function(evaluate_fn, model, args, "eval", dataloader_fn)
+    with torch.no_grad():
+        metrics = _call_evaluate_function(
+            evaluate_fn, model, args, "eval", dataloader_fn
+        )
 
     # restore training mode
     model.train(old_state)
@@ -992,6 +997,9 @@ def do_train(
                 progress_bar.set_postfix(postfix, refresh=False)
                 progress_bar.update(1)
 
+                del batch
+                del loss_tensor
+
                 if (
                     args.train_steps % interval_to_eval_at
                 ) == 0 and args.grad_steps == 0:
@@ -1130,7 +1138,10 @@ def do_test(
     if model.device != device:
         model = model.to(device)
 
-    with (logging_redirect_tqdm(),):
+    with (
+        logging_redirect_tqdm(),
+        torch.no_grad(),
+    ):
         test_metrics = _call_evaluate_function(
             evaluate_fn,
             model,
