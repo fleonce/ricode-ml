@@ -35,7 +35,7 @@ def get_grouped_parameters(
     weight_decay: float,
     lr: float,
 ):
-    no_decay = ["bias", "LayerNorm.weight", "layer_norm.weight"]
+    no_decay = ["bias", "LayerNorm.weight", "layer_norm.weight", "norm.weight"]
 
     grouped_parameters = [
         {
