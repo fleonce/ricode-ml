@@ -501,16 +501,33 @@ def forward_backward(
     device: torch.device | str,
     compute_context: AbstractContextManager,
     logger: logging.Logger,
-) -> torch.Tensor:
+) -> Mapping[str, torch.Tensor]:
+    # possibly use a lower precision instead of 32 bit floating point ops
     with compute_context:
+        # (1) forward pass
         output = model(**batch)
+
         if not hasattr(output, "loss"):
             raise ValueError(
                 f'Model {type(model).__name__} returned {output} without a "loss" attribute'
             )
+
         loss = output.loss
+
+        # (2) in case we do gradient accumulation, normalize across the batches
+        if args.hparams.gradient_accumulation > 1:
+            loss = loss / args.hparams.gradient_accumulation
+
+    # (3) finally, the backward pass
     loss.backward()
-    return loss.detach()
+
+    # (4) statistics: calculate the number of tokens in this batch
+    num_tokens = batch.attention_mask.sum().item()
+
+    return OrderedDict(
+        loss=loss.detach(),
+        batch_tokens=num_tokens,
+    )
 
 
 def check_parameters_for_nan(model: TModel, strict: bool):
@@ -729,9 +746,7 @@ def do_train(
     use_fsdp: bool = False,
     use_tensorboard: bool = True,
     num_epochs: int = 0,
-    verbose: bool = True,
     dont_ckpt: bool = False,
-    do_compile: bool = False,
     do_profile: bool = False,
     load_ckpt: Optional[Path] = None,
     load_optimizer_ckpt: Optional[bool] = True,
@@ -755,10 +770,10 @@ def do_train(
     | tuple[MetricsDict[TMetrics], ...]
 ]:
     """
-    Training implementation for ITER.
+    Training implementation
 
     Sets up datasets, seeding, reproducibility, model.
-    Contains the main training loop, handles evaluation too.
+    Contains the main training loop, handles evaluation, too.
     """
     generator = setup_seed(seed)
 
@@ -860,7 +875,6 @@ def do_train(
         )
     )
 
-    #     num_steps = (hparams.max_epochs * num_samples_per_epoch) // effective_batch_size
     optimizer, lr_scheduler = optimizer_fn(
         model=model,
         args=args,
@@ -896,6 +910,7 @@ def do_train(
     postfix: MutableMapping[str, Any] = collections.OrderedDict(
         epoch=args.epoch, score=0.0, loss=0.0, g_norm=0.0, tokens=0
     )
+
     if args.best_score is not None:
         postfix["score"] = float(args.best_score[1])
 
@@ -927,12 +942,15 @@ def do_train(
             postfix.update(epoch=args.epoch)
             args.epoch += 1
 
-            stats = torch.zeros(5, device=device)
+            stats = torch.zeros(4, device=device)
             stop_after_epoch = False
             for cpu_batch in dataloader:
                 batch_size = first(cpu_batch.values()).size(0)
 
+                # (1) move the batch to the desired device, non-blocking if possible
                 batch = cpu_batch.to(device, non_blocking=None)
+
+                # (2) call forward and backward using the model and batch
                 loss_info = step_fn(
                     model,
                     args,
@@ -941,20 +959,33 @@ def do_train(
                     compute_loss_context_mngr,
                     logger,
                 )
+
+                # (3) extract the loss tensor from the step function result
                 if isinstance(loss_info, MutableMapping):
                     loss_tensor = loss_info.pop("loss")
                 else:
+                    warnings.warn(
+                        "Returning just a torch.Tensor from the step function is subject to removal in the future, return a Mapping instead",
+                        DeprecationWarning,
+                    )
                     loss_tensor = loss_info
 
+                # (4) in case we are profiling, abort after a certain amount of steps
                 if do_profile and ((args.train_steps + 1) % 3 == 0):
                     stop_after_epoch = True
                     break
 
+                # (5) measure training statistics
                 stats[0] += loss_tensor.detach()
                 stats[1] += batch_size if loss_is_batch_accumulated else 1
 
                 args.grad_steps += 1
+                args.train_steps += 1
+
+                # (6) optimizer step, in case we did enough forward passes
                 if args.grad_steps >= hparams.gradient_accumulation:
+
+                    # (7) call the optimizer and update the lr scheduler
                     norm = train_step(model, optimizer, lr_scheduler).detach()
                     if check_nan_grad_norm and (
                         norm.isinf() or norm.isnan() or norm.isneginf()
@@ -964,30 +995,39 @@ def do_train(
                         )
                         stop_after_epoch = True
                         break
+
+                    # (8) update gradient norm statistics
                     stats[2] += norm
                     args.grad_steps = 0
 
+                # (9) update total tokens statistics
                 if "attention_mask" in batch:
                     num_tokens = batch["attention_mask"].sum()
                     stats[3] += num_tokens
 
-                args.train_steps += 1
+                # (10) sync statistics across devices,
                 if args.train_steps % hparams.gradient_accumulation == 0:
                     if use_fsdp:
                         dist.all_reduce(stats, dist.ReduceOp.SUM)
                     local_stats = stats.cpu()
-                    train_loss = (local_stats[0] / local_stats[1]).item()
-                    g_norm = (
-                        local_stats[2]
-                        / (local_stats[1] // hparams.gradient_accumulation)
-                    ).item()
-                    global_tokens = local_stats[3].item()
+
+                    # reset the distributed stats
                     stats.zero_()
-                    args.score_history["_loss"].append((args.train_steps, train_loss))
-                    args.score_history["_norm"].append((args.train_steps, g_norm))
+
+                    accumulated_loss, num_batches_or_steps, g_norm, global_tokens = (
+                        local_stats.tolist()
+                    )
+                    global_loss = accumulated_loss / num_batches_or_steps
+                    global_norm = g_norm / (
+                        num_batches_or_steps // hparams.gradient_accumulation
+                    )
+
+                    args.score_history["_loss"].append((args.train_steps, global_loss))
+                    args.score_history["_norm"].append((args.train_steps, global_norm))
+
                     postfix.update(
-                        loss=train_loss,
-                        g_norm=g_norm,
+                        loss=global_loss,
+                        g_norm=global_norm,
                         tokens=postfix["tokens"] + global_tokens,
                     )
 
@@ -1003,6 +1043,7 @@ def do_train(
                 del batch
                 del loss_tensor
 
+                # (11) evaluation in case we hit a breakpoint!
                 if (
                     args.train_steps % interval_to_eval_at
                 ) == 0 and args.grad_steps == 0:
