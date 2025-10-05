@@ -34,8 +34,10 @@ def get_grouped_parameters(
     model: TModel,
     weight_decay: float,
     lr: float,
+    no_decay_fields: list[str] | None = None,
 ):
     no_decay = ["bias", "LayerNorm.weight", "layer_norm.weight", "norm.weight"]
+    no_decay += no_decay_fields or []
 
     grouped_parameters = [
         {
