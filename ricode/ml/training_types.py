@@ -111,7 +111,6 @@ class StepBasedTraining(Protocol):
     num_steps: int
     eval_every_n_steps: int
     patience: int = 0
-    max_steps: int = 0
 
 
 @runtime_checkable
