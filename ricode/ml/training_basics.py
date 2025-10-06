@@ -6,10 +6,24 @@ import logging
 import pathlib
 from abc import ABC
 from pathlib import Path
-from typing import Any, ClassVar, Generic, Mapping, Optional, OrderedDict, TypeVar
+from typing import (
+    Any,
+    ClassVar,
+    Generic,
+    Mapping,
+    MutableMapping,
+    MutableSequence,
+    Optional,
+    OrderedDict,
+    Protocol,
+    runtime_checkable,
+    Sequence,
+    TypeVar,
+)
 
 import torch
 import typing_extensions
+from more_itertools.more import first
 from torch import Tensor
 from typing_extensions import Self
 
@@ -21,22 +35,171 @@ except ImportError as ie:
     TENSORBOARD = False
     SummaryWriter = None  # type: ignore
 
+InitializeType = TypeVar("InitializeType")
 
-def merge_update(base: dict, update: dict):
+
+def merge_update(base: dict, update_base: dict):
     output = dict()
-    keys = set(base.keys()) | set(update.keys())
+    keys = set(base.keys()) | set(update_base.keys())
     for k in keys:
         v = base.get(k, None)
-        update_v = update.get(k, None)
+        update_v = update_base.get(k, None)
         if k not in base and update_v is None:
             continue
-        if isinstance(v, dict):
+
+        is_special = (
+            isinstance(update_v, dict)
+            and "$$update" in update_v.keys()
+            and len(update_v.keys()) == 1
+        )
+        if is_special:
+            if v is None:
+                raise ValueError(
+                    f"Expected a pre-initialized dict or list for {k!r} to update"
+                )
+            elif not isinstance(v, (MutableSequence, MutableMapping)):
+                raise ValueError(
+                    f"Can only update dicts and lists, got {type(v)!r} aka {v!r}"
+                )
+
+            updates = update_v["$$update"]
+            for update in updates:
+                if not isinstance(update, Mapping):
+                    raise ValueError(
+                        f"Update must be a mapping, got a {update!r} ({type(update)!r})"
+                    )
+
+                action = first(update.keys(), None)
+                if action is None:
+                    raise ValueError(
+                        f"Invalid update document, got {update!r}, expected single key mapping"
+                    )
+
+                values = update[action]
+                if not isinstance(values, Sequence):
+                    raise ValueError(
+                        f"Values for {action!r} must be a sequence, got {values!r}"
+                    )
+
+                if isinstance(v, MutableSequence):
+                    if action == "$add":
+                        v.extend(values)
+                    elif action == "$remove":
+                        for element in values:
+                            v.remove(element)
+                    else:
+                        raise ValueError(action)
+                else:
+                    # v is a MutableMapping
+                    for value in values:
+                        if not isinstance(value, Mapping):
+                            raise ValueError(
+                                f"Expected a mapping for values of {action!r}, got {value!r}"
+                            )
+
+                        if action == "$add":
+                            for kk, kv in value.items():
+                                v[kk] = kv
+                        elif action == "$remove":
+                            for (
+                                kk,
+                                kv,
+                            ) in value.items():
+                                if kv is not None:
+                                    # remove only if value matches
+                                    if v[kk] == kv:
+                                        v.pop(kk)
+                                else:
+                                    # remove in any case
+                                    v.pop(kk)
+                        else:
+                            raise ValueError(action)
+            output[k] = v
+        elif isinstance(v, dict):
             assert update_v is None or isinstance(update_v, dict)
             update_v = update_v or dict()
             output[k] = merge_update(v, update_v)
         else:
             output[k] = update_v if update_v is not None else v
     return output
+
+
+def find_config_path(name_or_path: str | Path) -> Path:
+    if isinstance(name_or_path, Path) and name_or_path.exists():
+        return name_or_path
+    elif isinstance(name_or_path, Path):
+        name_or_path = name_or_path.absolute().as_posix()
+    if not name_or_path.endswith(".json"):
+        name_or_path = name_or_path + ".json"
+
+    path = Path(name_or_path)
+    local_path = Path().cwd() / "cfg" / name_or_path
+
+    if path.exists():
+        return path
+    elif local_path.exists():
+        return local_path
+    else:
+        raise ValueError(
+            f"Cannot find config '{name_or_path}' as a path or as a local config ({local_path.as_posix()})"
+        )
+
+
+def load_config_from_name_or_path(name_or_path: str | Path, recursive: bool = True):
+    config_path = find_config_path(name_or_path)
+    with config_path.open() as f:
+        config = json.load(f)
+
+    if "base" in config and recursive:
+        baseconfig = load_config_from_name_or_path(config["base"], recursive)
+        config = merge_update(baseconfig, config)
+    return config
+
+
+@runtime_checkable
+class ConfigProtocol(Protocol):
+    section_name: ClassVar[Optional[str]]
+    include_filepath_in_init: ClassVar[bool]
+
+
+def initialize_type_from_config(
+    cls: type[InitializeType],
+    name_or_path: str | pathlib.Path,
+    /,
+    section_name=None,
+    setup=False,
+    setup_function_name=None,
+    overrides=None,
+    **init_kwargs,
+) -> InitializeType:
+    config = load_config_from_name_or_path(name_or_path)
+    include_filepath_in_init = None
+    if isinstance(cls, ConfigProtocol):
+        if section_name is None and cls.section_name is not None:
+            section_name = cls.section_name
+        if include_filepath_in_init is None and cls.include_filepath_in_init:
+            include_filepath_in_init = True
+
+    kwargs = config[section_name]
+    if include_filepath_in_init:
+        kwargs["file_path"] = str(name_or_path)
+
+    # apply overrides specified via config files ("mixins")
+    if overrides is not None:
+        for override in overrides:
+            override_config = load_config_from_name_or_path(override)
+            if section_name in override_config:
+                kwargs = merge_update(kwargs, override_config[section_name])
+
+    # apply overrides specified via kwargs
+    kwargs = merge_update(kwargs, init_kwargs)
+
+    # create a new config / whatever type class from the kwargs!
+    conf = cls(**kwargs)
+
+    if setup and setup_function_name is not None:
+        getattr(conf, setup_function_name)()
+    return conf
 
 
 def pad_to_length(inp: str) -> str:
@@ -50,49 +213,30 @@ def format_tensor(values: torch.Tensor):
     return "[" + ", ".join([pad_to_length(fmt % (elem,)) for elem in values]) + "]"
 
 
-T = TypeVar("T", bound="NameableConfig")
-
-
 class NameableConfig(ABC):
     section_name: ClassVar[Optional[str]] = None
     with_filepath: ClassVar[bool] = False
 
     @classmethod
     def from_name(
-        cls: type[T],
-        name: str | pathlib.Path,
+        cls: type[InitializeType],
+        name_or_path: str | pathlib.Path,
         /,
         section_name=None,
         setup=False,
+        setup_function_name=None,
         overrides=None,
         **init_kwargs,
-    ) -> T:
-        if isinstance(name, pathlib.Path):
-            name = name.as_posix()
-
-        section_name = section_name if section_name is not None else cls.section_name
-        config = cls.load_from_name(name)
-        kwargs = config[section_name]
-        if cls.with_filepath:
-            kwargs["file_path"] = name
-
-        # apply overrides specified via config files ("mixins")
-        if overrides is not None:
-            for override in overrides:
-                override_config = cls.load_from_name(override)
-                if section_name in override_config:
-                    kwargs = merge_update(kwargs, override_config[section_name])
-
-        # apply overrides specified via kwargs
-        kwargs = merge_update(kwargs, init_kwargs)
-
-        # create a new config / whatever type class from the kwargs!
-        conf = cls(**kwargs)
-
-        # todo: rename setup_dataset
-        if setup and hasattr(conf, "setup_dataset"):
-            conf.setup_dataset()
-        return conf
+    ) -> InitializeType:
+        return initialize_type_from_config(
+            cls,
+            name_or_path,
+            section_name=section_name,
+            setup=setup,
+            setup_function_name=setup_function_name,
+            overrides=overrides,
+            **init_kwargs,
+        )
 
     @classmethod
     def load_from_name(cls, name: str):
@@ -104,24 +248,6 @@ class NameableConfig(ABC):
             baseconfig = cls.load_from_name(config["base"])
             config = merge_update(baseconfig, config)
         return config
-
-    @classmethod
-    def find_config(cls, name: str | Path) -> Path:
-        if isinstance(name, Path) and name.exists():
-            return name
-        elif isinstance(name, Path):
-            name = name.absolute().as_posix()
-        if not name.endswith(".json"):
-            name = name + ".json"
-        path = Path(name)
-        local_path = Path().cwd() / "cfg" / name
-        if path.exists():
-            return path
-        elif local_path.exists():
-            return local_path
-        raise ValueError(
-            f"Cannot find config '{name}' as a path or as a local config ({local_path.as_posix()})"
-        )
 
 
 @dataclasses.dataclass(kw_only=True)

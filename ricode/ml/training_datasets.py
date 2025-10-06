@@ -122,7 +122,7 @@ def _resolve_split_info(value: Any):  # value is str or dict[str, str]
 
 @dataclasses.dataclass(kw_only=True)
 class BasicDataset(NameableConfig):
-    with_filepath: ClassVar[bool] = True
+    include_filepath_in_init: ClassVar[bool] = True
     storage_prefix: ClassVar[str] = ""
     split_names: ClassVar[set[str]] = {"train", "test", "eval"}
     use_multiprocessing: ClassVar[bool] = False
