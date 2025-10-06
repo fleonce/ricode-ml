@@ -155,6 +155,30 @@ def get_scheduler_lambda(
             return decay
 
         return lambda_rule
+    elif scheduler_type == "cosine_to10x_with_warmup":
+
+        def lambda_rule(step):
+            if step < warmup_steps:
+                # warmup the learning rate from 0 to 1 over the first 'warmup_steps' steps
+                return float(step) / float(max(1, warmup_steps))
+
+            if step >= total_steps:
+                return 0.1
+
+            num_normal_steps = total_steps - warmup_steps
+            effective_step = step - warmup_steps
+
+            # cosine decay to 10 % of the original learning rate over training, following
+            # https://arxiv.org/pdf/2203.15556#appendix.B, Figure A1
+            # also follows NeoBERT, however, they train with a constant LR for the last 100 K optimization steps (10 %)
+            decay = math.cos(math.pi * effective_step / num_normal_steps) / 2 + 0.5
+            decay = 0.1 + 0.9 * decay
+
+            return decay
+
+        return lambda_rule
+    elif scheduler_type == "cosine_to10x":
+        return get_scheduler_lambda("cosine_to10x_with_warmup", 0.0, total_steps)
     else:
         raise ValueError(f"Unknown scheduler type {scheduler_type}")
 
