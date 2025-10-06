@@ -573,7 +573,7 @@ def get_training_steps(
         if args.hparams.num_steps > 0:
             return (
                 args.hparams.num_steps,
-                args.hparams.max_steps or args.hparams.num_steps,
+                args.hparams.num_steps,
                 args.hparams.eval_every_n_steps,
                 steps_per_epoch,
             )
