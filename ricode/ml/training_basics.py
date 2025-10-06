@@ -215,7 +215,7 @@ def format_tensor(values: torch.Tensor):
 
 class NameableConfig(ABC):
     section_name: ClassVar[Optional[str]] = None
-    with_filepath: ClassVar[bool] = False
+    include_filepath_in_init: ClassVar[bool] = False
 
     @classmethod
     def from_name(
@@ -253,7 +253,7 @@ class NameableConfig(ABC):
 @dataclasses.dataclass(kw_only=True)
 class BasicHparams(NameableConfig):
     section_name = "training"
-    with_filepath = False
+    include_filepath_in_init: ClassVar[bool] = False
 
     num_epochs: int = 1
     max_epochs: int = 1
