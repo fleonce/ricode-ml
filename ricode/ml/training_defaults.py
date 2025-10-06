@@ -16,6 +16,8 @@ from ricode.ml.training_types import (
     DataLoaderProtocol,
     EvaluateProtocol,
     HasOptimizerArgs,
+    ModelInitProtocol,
+    TConfig,
     TDataset,
     THparams,
     TModel,
@@ -102,6 +104,23 @@ if TORCHAO:
 
         return _quantized_init
 
+    def setup_float8_model(
+        model_class: type[TModel],
+        model_init_fn: ModelInitProtocol[TConfig, TModel] | None = None,
+    ):
+        if model_init_fn is None:
+            model_init_fn = setup_model(model_class)
+
+        def _model_setup(config: TConfig) -> TModel:
+            model = model_init_fn(config)
+
+            from torchao.float8 import convert_to_float8_training
+
+            model = convert_to_float8_training(model)
+            return model  # type: ignore
+
+        return _model_setup
+
 else:
 
     def setup_quantized_model(
@@ -111,6 +130,13 @@ else:
         quantization_config_kwargs: Optional[Mapping[str, Any]] = None,
     ):
         warnings.warn("torchao must be installed for quantization to work")
+        return setup_model(model_class)
+
+    def setup_float8_model(
+        model_class: type[TModel],
+        model_init_fn: ModelInitProtocol[TConfig, TModel] | None = None,
+    ):
+        warnings.warn("torchao must be installed for float8 training to work")
         return setup_model(model_class)
 
 
