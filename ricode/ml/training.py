@@ -1009,7 +1009,7 @@ def do_train(
                 if args.train_steps % hparams.gradient_accumulation == 0:
                     if use_fsdp:
                         dist.all_reduce(stats, dist.ReduceOp.SUM)
-                    local_stats = stats.cpu()
+                    local_stats = stats.clone().cpu()
 
                     # reset the distributed stats
                     stats.zero_()
