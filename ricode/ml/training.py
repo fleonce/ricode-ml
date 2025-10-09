@@ -356,6 +356,8 @@ def write_reproducibility_checkpoint(
         subprocess.run("python -m pip freeze".split(), stdout=f)
 
     torch.save(repro_dict, f"{model_path}/repro.pt")
+    with open(f"{model_path}/hparams.json", "w") as f:
+        json.dump(hparams.to_json(), f)
 
 
 def load_checkpoint(
