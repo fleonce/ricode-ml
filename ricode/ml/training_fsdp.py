@@ -1,4 +1,3 @@
-import functools
 import os
 from datetime import timedelta
 from functools import partial
@@ -28,51 +27,6 @@ TConfig = TypeVar("TConfig")
 TModel = TypeVar("TModel", bound=PreTrainedModel)
 
 
-def rank_zero_first(func):
-    @functools.wraps(func)
-    def wrapper(*args, **kwargs):
-        if is_rank_zero():
-            res = func(*args, **kwargs)
-            distributed_barrier()
-        else:
-            distributed_barrier()
-            res = func(*args, **kwargs)
-        return res
-
-    return wrapper
-
-
-def in_distributed_group() -> bool:
-    if dist.is_initialized():
-        return True
-
-    if "RANK" in os.environ:
-        fsdp_setup()
-        return dist.is_initialized()
-    return False
-
-
-def distributed_rank() -> int:
-    if "RANK" in os.environ:
-        return int(os.environ["RANK"])
-    return 0
-
-
-def distributed_world_size() -> int:
-    if "WORLD_SIZE" in os.environ:
-        return int(os.environ["WORLD_SIZE"])
-    return 1
-
-
-def is_rank_zero() -> bool:
-    return not in_distributed_group() or distributed_rank() == 0
-
-
-def distributed_barrier():
-    if dist.is_initialized():
-        dist.barrier()
-
-
 def fsdp_setup():
     rank = int(os.environ["RANK"])
     world_size = int(os.environ["WORLD_SIZE"])
@@ -99,22 +53,6 @@ def fsdp_setup():
         device_id=torch.device("cuda", local_device),
     )
     return rank, world_size, local_device
-
-
-def do_fsdp_cleanup(func):
-    @functools.wraps(func)
-    def wrapper(*args, **kwargs):
-        try:
-            return func(*args, **kwargs)
-        finally:
-            if dist.is_initialized():
-                fsdp_cleanup()
-
-    return wrapper
-
-
-def fsdp_cleanup():
-    dist.destroy_process_group()
 
 
 def fsdp_guess_wrapping_block_from_model_types(model_types: list[type]) -> type:

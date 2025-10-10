@@ -1,9 +1,11 @@
 import dataclasses
 import logging
+import pathlib
 from collections import defaultdict
 from contextlib import AbstractContextManager
 from dataclasses import Field, fields as dataclass_fields, is_dataclass
 from typing import (
+    Callable,
     ClassVar,
     Dict,
     Generic,
@@ -229,7 +231,16 @@ _V_cont = TypeVar("_V_cont", contravariant=True)
 
 
 class ModelInitProtocol(Protocol[_T_cont, _T_co]):
-    def __call__(self, config: _T_cont) -> _T_co: ...
+    def __call__(
+        self, config: _T_cont, checkpoint_path: str | pathlib.Path | None = None
+    ) -> _T_co: ...
+
+
+class ModelUpdateProtocol(Protocol[TModel]):
+    def __call__(self, model: TModel) -> TModel: ...
+
+
+ModelInitFunction = Callable[[TModel], TModel]
 
 
 class OptimizerInitProtocol(Protocol[_T_cont, TDataset, THparams]):

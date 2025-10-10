@@ -33,8 +33,8 @@ from tqdm import tqdm
 from tqdm.contrib.logging import logging_redirect_tqdm
 from transformers import PretrainedConfig
 
+from ricode.ml.distributed.utils import rank_zero_first
 from ricode.ml.training_basics import NameableConfig
-from ricode.ml.training_fsdp import rank_zero_first
 from ricode.ml.training_types import TDataset, THparams, TrainingArgs
 from ricode.ml.training_utils import build_chunks
 

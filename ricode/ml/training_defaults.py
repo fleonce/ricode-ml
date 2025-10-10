@@ -9,9 +9,9 @@ from torcheval.metrics import Mean
 from torcheval.metrics.toolkit import sync_and_compute
 from tqdm import tqdm
 
+from ricode.ml.distributed import distributed_world_size
 from ricode.ml.training_basics import BasicMetrics, MetricsDict
 from ricode.ml.training_datasets import BasicDataset, ProxyTrainingArgs
-from ricode.ml.training_fsdp import distributed_world_size
 from ricode.ml.training_types import (
     DataLoaderProtocol,
     EvaluateProtocol,
@@ -104,23 +104,6 @@ if TORCHAO:
 
         return _quantized_init
 
-    def setup_float8_model(
-        model_class: type[TModel],
-        model_init_fn: ModelInitProtocol[TConfig, TModel] | None = None,
-    ):
-        if model_init_fn is None:
-            model_init_fn = setup_model(model_class)
-
-        def _model_setup(config: TConfig) -> TModel:
-            model = model_init_fn(config)
-
-            from torchao.float8 import convert_to_float8_training
-
-            model = convert_to_float8_training(model)
-            return model  # type: ignore
-
-        return _model_setup
-
 else:
 
     def setup_quantized_model(
@@ -196,7 +179,7 @@ def get_scheduler_lambda(
 
             # cosine decay to 10 % of the original learning rate over training, following
             # https://arxiv.org/pdf/2203.15556#appendix.B, Figure A1
-            # also follows NeoBERT, however, they train with a constant LR for the last 100 K optimization steps (10 %)
+            # also follows NeoBERT, however, they train with a constant LR for the last 100 K model_setup steps (10 %)
             decay = math.cos(math.pi * effective_step / num_normal_steps) / 2 + 0.5
             decay = 0.1 + 0.9 * decay
 

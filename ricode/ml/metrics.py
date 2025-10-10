@@ -21,7 +21,7 @@ from torcheval.metrics import Metric, MulticlassConfusionMatrix
 from torcheval.metrics.toolkit import sync_and_compute_collection
 from transformers import PreTrainedTokenizerBase
 
-from ricode.ml.training_fsdp import distributed_world_size
+from ricode.ml.distributed import distributed_world_size
 from ricode.ml.training_types import SupportsGetItemDataclass
 
 TensorTuple: TypeAlias = tuple[torch.Tensor, torch.Tensor]

@@ -24,7 +24,6 @@ from pathlib import Path
 from typing import (
     Any,
     Callable,
-    cast,
     ContextManager,
     Mapping,
     MutableMapping,
@@ -52,19 +51,17 @@ from tqdm.contrib.logging import logging_redirect_tqdm
 from transformers import PreTrainedModel
 
 from ricode.ml.dataloaders import Batch, ProfilingDataLoaderIterator
+from ricode.ml.distributed import distributed_barrier
+from ricode.ml.distributed.utils import finalise_distributed_environment_after_exit
+from ricode.ml.model_setup.fully_sharded_dp import _is_fully_sharded_dp_model
+from ricode.ml.model_setup.utils import setup_model
 from ricode.ml.training_basics import (
     BasicHparams,
     BasicMetrics,
     MetricsDict,
     TensorboardLogger,
 )
-from ricode.ml.training_defaults import evaluate_multikey_split_datasets, setup_model
-from ricode.ml.training_fsdp import (
-    distributed_barrier,
-    distributed_rank,
-    do_fsdp_cleanup,
-    fsdp_setup_model,
-)
+from ricode.ml.training_defaults import evaluate_multikey_split_datasets
 from ricode.ml.training_operators import safe_score_comparison
 from ricode.ml.training_types import (
     ConfigInitProtocol,
@@ -408,17 +405,14 @@ def load_checkpoint(
 
 def load_model_checkpoint(
     model: TModel,
-    model_class: type[TModel],
     config: TConfig,
+    model_init: ModelInitProtocol[TConfig, TModel],
     model_path: str,
     device: str,
-    use_fsdp: bool,
-    use_bfloat16: bool,
     memory_checkpoints: bool,
-    fsdp_kwargs: Mapping[str, Any],
 ) -> TModel:
     if memory_checkpoints:
-        if use_fsdp:
+        if _is_fully_sharded_dp_model(model):
             raise NotImplementedError
         else:
             # global _checkpoint_state_dict
@@ -429,31 +423,9 @@ def load_model_checkpoint(
         del model
         torch.cuda.empty_cache()
 
-        if use_fsdp:
-
-            def fsdp_model_init(config: TConfig, **kwargs) -> TModel:
-                if distributed_rank() == 0:
-                    m = model_class.from_pretrained(
-                        kwargs["pretrained_model_name_or_path"]
-                    )
-                    if not isinstance(m, model_class):
-                        raise ValueError
-                    return m
-                return model_class(config)
-
-            model = fsdp_setup_model(
-                config,
-                fsdp_model_init,
-                model_init_kwargs={"pretrained_model_name_or_path": model_path},
-                use_bfloat16=use_bfloat16,
-                use_hsdp=False,
-                use_activation_checkpointing=True,
-                **fsdp_kwargs,
-            )[0]
-            return model
-        else:
-            model = model_class.from_pretrained(model_path)
-            return cast(TModel, model.to(device))
+        model = model_init(config, model_path)
+        model = model.to(device)
+        return model  # type: ignore
 
 
 def train_step(
@@ -601,6 +573,14 @@ def get_training_steps(
     )
 
 
+def record_training_statistics(
+    args: TrainingArgs[THparams, TDataset],
+):
+    # if args.
+    # args.score_history["_cuda_utilization"].append()
+    pass
+
+
 def _restore_train_state(func):
     def wrapper(model: TModel, *args, **kwargs):
         train_state = model.training
@@ -727,7 +707,7 @@ def do_evaluate(
     return new_best_score, stop_after_epoch, outcome_score, False
 
 
-@do_fsdp_cleanup
+@finalise_distributed_environment_after_exit
 def do_train(
     dataset: TDataset,
     hparams: THparams,
@@ -755,8 +735,6 @@ def do_train(
     track_metrics: Optional[set[str]] = None,
     track_title: Optional[str] = None,
     model_init: Optional[ModelInitProtocol[TConfig, TModel]] = None,
-    model_init_kwargs: Optional[MutableMapping[str, Any]] = None,
-    fsdp_kwargs: Optional[Mapping[str, Any]] = None,
     plot_kwargs: Optional[Mapping[str, Any]] = None,
     score_comparison: Callable[[float, float], bool] = operator.gt,
     loss_is_batch_accumulated: bool = True,
@@ -779,8 +757,6 @@ def do_train(
     """
     generator = setup_seed(seed)
 
-    model_init_kwargs = model_init_kwargs or dict()
-    fsdp_kwargs = fsdp_kwargs or dict()
     plot_kwargs = plot_kwargs or dict()
 
     rank, world_size = 0, 1
@@ -816,30 +792,12 @@ def do_train(
     config = config_init_fn(dataset, hparams)
 
     if model_init is None:
-        model_init = setup_model(model_class)
+        model_init = setup_model(model_class, for_fully_sharded_dp=use_fsdp)
 
-    if use_fsdp:
-        fsdp_model_init = model_init if not load_ckpt else model_class.from_pretrained
-        if load_ckpt:
-            model_init_kwargs["pretrained_model_name_or_path"] = load_ckpt
-        model, rank, world_size, device = fsdp_setup_model(
-            config,
-            fsdp_model_init,
-            model_init_kwargs=model_init_kwargs,
-            use_bfloat16=use_bfloat16,
-            use_hsdp=False,
-            use_activation_checkpointing=True,
-            **fsdp_kwargs,
-        )
+    if load_ckpt:
+        model = model_init(config, str(load_ckpt))
     else:
-        if load_ckpt:
-            model = model_class.from_pretrained(
-                load_ckpt,
-                config=config,
-                **model_init_kwargs,
-            )
-        else:
-            model = model_init(config, **model_init_kwargs)
+        model = model_init(config, None)
 
     if device is None:
         device = "cpu" if not torch.cuda.is_available() else "cuda:0"
@@ -1115,23 +1073,21 @@ def do_train(
 
     if use_fsdp:
         logger.info("Waiting at save barrier")
-        dist.barrier()
+        distributed_barrier()
     if not dont_ckpt and args.best_score is not None:
         checkpoint_path = Path(model_path)
         if new_checkpoint_logic:
             best_step = args.best_score[0]
             checkpoint_path = checkpoint_path / f"step-{best_step}"
         logger.info(f"Loading checkpoint from {checkpoint_path.as_posix()}")
+
         model = load_model_checkpoint(
             model,
-            model_class,
             config,
-            checkpoint_path.as_posix(),
+            model_init,
+            model_path,
             device,
-            use_fsdp,
-            use_bfloat16,
             memory_checkpoints,
-            fsdp_kwargs,
         )
 
         shutil.copytree(
