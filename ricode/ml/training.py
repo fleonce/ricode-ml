@@ -341,7 +341,10 @@ def write_reproducibility_checkpoint(
     optimizer: Optimizer,
     hparams: THparams,
     num_epochs: int,
+    reproducibility_variables: Mapping[str, Any] | None,
 ):
+    reproducibility_variables = reproducibility_variables or {}
+
     repro_dict = {
         "model": model.state_dict(),
         "optimizer": optimizer.state_dict(),
@@ -355,6 +358,10 @@ def write_reproducibility_checkpoint(
     torch.save(repro_dict, f"{model_path}/repro.pt")
     with open(f"{model_path}/hparams.json", "w") as f:
         json.dump(hparams.to_json(), f)
+
+    for key, value in reproducibility_variables.items():
+        with open(f"{model_path}/{key}.json", "w") as f:
+            json.dump(value, f)
 
 
 def load_checkpoint(
@@ -743,6 +750,7 @@ def do_train(
     device: Optional[str] = None,
     new_checkpoint_logic: Optional[bool] = True,
     check_nan_grad_norm: bool = False,
+    reproducibility_variables: Optional[Mapping[str, Any]] = None,
 ) -> Optional[
     TMetrics
     | tuple[TMetrics, ...]
@@ -865,6 +873,7 @@ def do_train(
             optimizer=optimizer,
             hparams=hparams,
             num_epochs=num_epochs,
+            reproducibility_variables=reproducibility_variables,
         )
 
     postfix: MutableMapping[str, Any] = collections.OrderedDict(
