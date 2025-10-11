@@ -192,13 +192,13 @@ class TrainingArgs(Generic[THparams, TDataset]):
 
     @property
     def rank(self):
-        from ricode.ml.training_fsdp import distributed_rank
+        from ricode.ml.distributed import distributed_rank
 
         return distributed_rank()
 
     @cached_property
     def world_size(self):
-        from ricode.ml.training_fsdp import distributed_world_size
+        from ricode.ml.distributed import distributed_world_size
 
         return distributed_world_size()
 
