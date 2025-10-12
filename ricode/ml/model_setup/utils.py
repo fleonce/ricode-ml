@@ -40,7 +40,9 @@ def setup_model(
             if checkpoint_path is None:
                 return model_class(config)
             else:
-                return model_class.from_pretrained(config=config)
+                return model_class.from_pretrained(
+                    config=config, pretrained_model_name_or_path=checkpoint_path
+                )
 
     return _model_init
 
