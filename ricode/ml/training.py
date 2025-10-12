@@ -411,7 +411,7 @@ def load_model_checkpoint(
     model: TModel,
     config: TConfig,
     model_init: ModelInitProtocol[TConfig, TModel],
-    model_path: str,
+    model_path: Path,
     device: str,
     memory_checkpoints: bool,
 ) -> TModel:
@@ -1104,7 +1104,7 @@ def do_train(
             model,
             config,
             model_init,
-            model_path,
+            checkpoint_path,
             device,
             memory_checkpoints,
         )
