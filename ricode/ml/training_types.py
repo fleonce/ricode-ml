@@ -156,9 +156,6 @@ class HasDatasetProperties(Protocol):
     """
 
     name: str
-    file_path: Optional[str]
-
-    def list_splits(self, logger: logging.Logger): ...
 
     def __getitem__(self, item: str) -> SafetensorsDataset | SafetensorsDict: ...
 
@@ -174,6 +171,7 @@ class TrainingArgs(Generic[THparams, TDataset]):
     hparams: THparams
     dataset: TDataset
     train_logger: TensorboardLogger
+    console_logger: logging.Logger
 
     # flags
     use_fsdp: bool
@@ -296,3 +294,15 @@ class EvaluateProtocol(Protocol[_T_cont, TDataset, THparams, _T_CovMetrics]):
         split: str,
         dataloader_fn: DataLoaderProtocol[TDataset, THparams],
     ) -> _T_CovMetrics | MetricsDict[_T_CovMetrics]: ...
+
+
+def _identity_hook(model: TModel, args: TrainingArgs[THparams, TDataset]):
+    pass
+
+
+@dataclasses.dataclass()
+class Hooks(Generic[TModel, THparams, TDataset]):
+
+    on_model_init: Callable[[TModel, TrainingArgs[THparams, TDataset]], None] = (
+        _identity_hook
+    )

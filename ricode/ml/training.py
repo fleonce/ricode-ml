@@ -70,6 +70,7 @@ from ricode.ml.training_types import (
     EvaluateProtocol,
     ForwardBackwardProtocol,
     HasDatasetProperties,
+    Hooks,
     ModelInitProtocol,
     OptimizerInitProtocol,
     StepBasedTraining,
@@ -198,9 +199,9 @@ def setup_model_path(
 def setup_logging(
     name: str,
     model_path: str,
-    log_file: Optional[Path],
+    log_file: Optional[Path] = None,
     log_append: bool = False,
-):
+) -> logging.Logger:
     log_handlers: list[logging.StreamHandler]
     log_handlers = [logging.StreamHandler(sys.stdout)]
     if not log_file:
@@ -251,7 +252,6 @@ def reproducibility_logging(
         if os.environ.get("ITER_LOG_DIFF", "1") == "1":
             logger.warning(get_working_tree_diff())
     logger.info(f"Seed = {seed}")
-    logger.info(f"Dataset = {dataset.file_path}")
     if use_fsdp:
         if "RANK" not in os.environ:
             raise ValueError(
@@ -274,7 +274,7 @@ def reproducibility_logging(
             "pytorch_git": torch.version.git_version,
             "git": get_commit_hash(),
             "seed": seed,
-            "dataset": dataset.file_path,
+            "dataset": dataset.name,
             **hparams.__dict__,
         },
         disable=not use_tensorboard,
@@ -291,9 +291,9 @@ def train_logging(
     logger.info(model)
 
     # print dataset info
-    dataset.list_splits(logger)
+    logger.info(repr(dataset))
 
-    logger.info(hparams.to_json() + f" for dataset {dataset.file_path}")
+    logger.info(hparams.to_json())
     if load_ckpt is not None:
         logger.info(f"Loaded model from {load_ckpt.as_posix()}")
     numel = sum(param.numel() for param in model.parameters())
@@ -303,9 +303,6 @@ def train_logging(
     logger.info(str(numel / 1e6) + f" M params ({numel} total)")
     if no_grad_numel > 0:
         logger.info(str((numel - no_grad_numel) / 1e6) + " M activated params")
-
-    if hasattr(model, "list_features"):
-        model.list_features(logger)
 
 
 def setup_precision_context(
@@ -729,6 +726,7 @@ def do_train(
     model_path: Optional[str] = None,
     log_file: Optional[Path] = None,
     log_append: bool = False,
+    logger: Optional[logging.Logger] = None,
     seed: int = 42,
     use_tqdm: bool = True,
     use_bfloat16: bool = False,
@@ -751,6 +749,7 @@ def do_train(
     new_checkpoint_logic: Optional[bool] = True,
     check_nan_grad_norm: bool = False,
     reproducibility_variables: Optional[Mapping[str, Any]] = None,
+    hooks: Optional[Hooks] = None,
 ) -> Optional[
     TMetrics
     | tuple[TMetrics, ...]
@@ -763,14 +762,23 @@ def do_train(
     Sets up datasets, seeding, reproducibility, model.
     Contains the main training loop, handles evaluation, too.
     """
-    generator = setup_seed(seed)
+    if device is None:
+        device = "cpu" if not torch.cuda.is_available() else "cuda:0"
 
-    plot_kwargs = plot_kwargs or dict()
+    if hooks is None:
+        hooks = Hooks()
 
-    rank, world_size = 0, 1
+    if plot_kwargs is None or not plot_kwargs:
+        plot_kwargs = {}
 
     if load_optimizer_ckpt is None:
+        warnings.warn(
+            "load_optimizer_ckpt is None, defaulting to load_optimizer_checkpoint=True"
+        )
         load_optimizer_ckpt = True
+
+    generator = setup_seed(seed)
+    rank, world_size = 0, 1
 
     track_metrics = (track_metrics or set()) | {hparams.optimize_for, "_steps"}
     if not model_path:
@@ -780,7 +788,8 @@ def do_train(
             use_fsdp,
         )
 
-    logger = setup_logging("train", model_path, log_file, log_append)
+    if logger is None:
+        logger = setup_logging("train", model_path, log_file, log_append)
 
     # log seed, torch and cuda version, whether we use mixed precision, etc...
     train_logger = reproducibility_logging(
@@ -792,6 +801,19 @@ def do_train(
         use_bfloat16,
         use_fsdp,
         use_tensorboard,
+    )
+
+    args = TrainingArgs(
+        local_device=device,
+        seed=seed,
+        generator=generator,
+        hparams=hparams,
+        dataset=dataset,
+        use_fsdp=use_fsdp,
+        use_tqdm=use_tqdm,
+        train_logger=train_logger,
+        scores_to_track=track_metrics,
+        console_logger=logger,
     )
 
     if config_init_fn is None:
@@ -807,26 +829,14 @@ def do_train(
     else:
         model = model_init(config, None)
 
-    if device is None:
-        device = "cpu" if not torch.cuda.is_available() else "cuda:0"
-
     # check if the model contains any uninitialized parameters
     check_parameters_for_nan(model, strict=not allow_nan_parameters)
 
     # log model arch, hparams, # params, model features
     train_logging(model, hparams, logger, dataset, load_ckpt)
 
-    args = TrainingArgs(
-        local_device=device,
-        seed=seed,
-        generator=generator,
-        hparams=hparams,
-        dataset=dataset,
-        use_fsdp=use_fsdp,
-        use_tqdm=use_tqdm,
-        train_logger=train_logger,
-        scores_to_track=track_metrics,
-    )
+    # call the model init hook
+    hooks.on_model_init(model, args)
 
     compute_loss_context_mngr = setup_precision_context(
         use_bfloat16,
