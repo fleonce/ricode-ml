@@ -36,6 +36,14 @@ from ricode.ml.training_basics import (
 )
 from ricode.ml.training_utils import cached_property
 
+try:
+    import datasets
+
+    HUGGINGFACE_DATASETS = True
+except ImportError:
+    HUGGINGFACE_DATASETS = False
+    datasets = None
+
 
 TConfig = TypeVar("TConfig")
 TModel = TypeVar("TModel", bound=PreTrainedModel)
@@ -51,6 +59,12 @@ _T_co = TypeVar("_T_co", covariant=True)
 int_tuple: TypeAlias = tuple[int, ...]
 float_tuple: TypeAlias = tuple[float, ...]
 str_tuple: TypeAlias = tuple[str, ...]
+
+
+if HUGGINGFACE_DATASETS:
+    VALID_DATASET_TYPES = Union[SafetensorsDataset, SafetensorsDict, datasets.Dataset]
+else:
+    VALID_DATASET_TYPES = Union[SafetensorsDataset, SafetensorsDict]
 
 
 class SupportsNext(Protocol[_T_co]):
@@ -157,7 +171,7 @@ class HasDatasetProperties(Protocol):
 
     name: str
 
-    def __getitem__(self, item: str) -> SafetensorsDataset | SafetensorsDict: ...
+    def __getitem__(self, item: str) -> VALID_DATASET_TYPES: ...
 
 
 TDataset = TypeVar("TDataset", bound=HasDatasetProperties)
