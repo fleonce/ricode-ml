@@ -996,9 +996,9 @@ def do_train(
                     accumulated_loss, num_batches_or_steps, g_norm, global_tokens = (
                         local_stats.tolist()
                     )
-                    global_loss = accumulated_loss / num_batches_or_steps
+                    global_loss = accumulated_loss / min(1, num_batches_or_steps)
                     global_norm = g_norm / (
-                        num_batches_or_steps // hparams.gradient_accumulation
+                        min(1, num_batches_or_steps // hparams.gradient_accumulation)
                     )
 
                     args.score_history["_loss"].append((args.train_steps, global_loss))
