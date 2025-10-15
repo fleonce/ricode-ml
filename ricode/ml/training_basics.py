@@ -255,14 +255,10 @@ class BasicHparams(NameableConfig):
     section_name = "training"
     include_filepath_in_init: ClassVar[bool] = False
 
-    num_epochs: int = 1
-    max_epochs: int = 1
     optimize_for: str = "accuracy"
     patience: int = 0
     batch_size: int = 2
     gradient_accumulation: int = 1
-    eval_every_n_epochs: int = 1
-    d_ff: int = 1
 
     def to_json(self):
         return json.dumps(self.__dict__, indent=2)
