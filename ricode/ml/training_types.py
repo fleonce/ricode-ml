@@ -39,7 +39,10 @@ from ricode.ml.training_utils import cached_property
 try:
     import datasets
 
-    HUGGINGFACE_DATASETS = True
+    if hasattr(datasets, "Dataset"):
+        HUGGINGFACE_DATASETS = True
+    else:
+        HUGGINGFACE_DATASETS = False
 except ImportError:
     HUGGINGFACE_DATASETS = False
     datasets = None
