@@ -50,6 +50,7 @@ from tqdm import tqdm
 from tqdm.contrib.logging import logging_redirect_tqdm
 from transformers import PreTrainedModel
 
+from ricode.ml import training_operators
 from ricode.ml.dataloaders import Batch, ProfilingDataLoaderIterator
 from ricode.ml.distributed import distributed_barrier
 from ricode.ml.distributed.utils import finalise_distributed_environment_after_exit
@@ -741,8 +742,8 @@ def do_train(
     track_title: Optional[str] = None,
     model_init: Optional[ModelInitProtocol[TConfig, TModel]] = None,
     plot_kwargs: Optional[Mapping[str, Any]] = None,
-    score_comparison: Callable[[float, float], bool] = operator.gt,
-    loss_is_batch_accumulated: bool = True,
+    score_comparison: Optional[Callable[[float, float], bool]] = None,
+    loss_is_batch_accumulated: bool = False,
     allow_nan_parameters: bool = False,
     memory_checkpoints: bool = False,
     device: Optional[str] = None,
@@ -776,6 +777,12 @@ def do_train(
             "load_optimizer_ckpt is None, defaulting to load_optimizer_checkpoint=True"
         )
         load_optimizer_ckpt = True
+
+    if score_comparison is None:
+        if "loss" in hparams.optimize_for:
+            score_comparison = training_operators.lt
+        else:
+            score_comparison = training_operators.gt
 
     generator = setup_seed(seed)
     rank, world_size = 0, 1
