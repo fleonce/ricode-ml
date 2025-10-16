@@ -1,6 +1,7 @@
 from functools import partial
 from typing import Any
 
+import torch
 from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
     apply_activation_checkpointing,
     checkpoint_wrapper,
@@ -8,11 +9,16 @@ from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
 )
 from torch.utils.checkpoint import create_selective_checkpoint_contexts
 
-from ricode.ml.model_setup.utils import guess_model_block_type, identity
+from ricode.ml.model_setup.utils import (
+    guess_model_block_type,
+    guess_model_block_types,
+    identity,
+)
 from ricode.ml.training_types import ModelUpdateProtocol, TModel
 
 
 def setup_blockwise_activation_checkpointing(
+    wrapping_blocks: list[type[torch.nn.Module]] | None = None,
     *,
     disable: bool = False,
 ) -> ModelUpdateProtocol[TModel]:
@@ -24,10 +30,15 @@ def setup_blockwise_activation_checkpointing(
     )
 
     def _model_init(module: TModel) -> TModel:
-        wrapping_block = guess_model_block_type(module)
+        nonlocal wrapping_blocks
+
+        if wrapping_blocks is None:
+            wrapping_blocks = guess_model_block_types(module)
 
         def selective_activation_checkpoint(submodule):
-            return isinstance(submodule, wrapping_block)
+            if any(isinstance(submodule, block) for block in wrapping_blocks):
+                return True
+            return False
 
         apply_activation_checkpointing(
             module,
