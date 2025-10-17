@@ -70,7 +70,7 @@ def setup_dataloader(
     # enable memory pinning?
     # when we have lots of data, moving from pinned memory->gpu can speed up the transfer to the gpu
     pin_memory: bool = False,
-    batch_size: Optional[int] = None,
+    batch_size: Optional[int | Callable[[str], int]] = None,
     num_workers: int = 0,
 ) -> DataLoader:
     if not isinstance(args.dataset, HasDatasetProperties):
@@ -82,6 +82,8 @@ def setup_dataloader(
 
     if batch_size is None:
         batch_size = args.hparams.batch_size
+    elif not isinstance(batch_size, int):
+        batch_size = batch_size(split)
 
     do_shuffle = train is True
     if isinstance(args.dataset[split], IterableDataset):
