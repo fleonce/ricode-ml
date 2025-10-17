@@ -12,6 +12,7 @@ dependencies = [
     "matplotlib==3.10.6",
     "with_argparse==1.0.4",
     "more-itertools>=10.6.0",
+    "attrs==25.4.0",
 ]
 requires-python = ">= 3.10"
 authors = [
