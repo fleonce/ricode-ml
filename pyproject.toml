@@ -26,6 +26,9 @@ maintainers = [
 homepage = "https://github.com/fleonce/ricode-ml"
 repository = "https://github.com/fleonce/ricode-ml"
 
+[project.scripts]
+brrrrrrrr = "ricode:distributed.launch"
+
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["ricode*"]
