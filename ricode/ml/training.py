@@ -174,6 +174,12 @@ def save_checkpoint(
             dist.barrier()
 
 
+def _get_model_path(basename: str = "models"):
+    date = datetime.now()
+    date_fmt = date.strftime("%Y-%m-%d_%H-%M-%S")
+    return f"{basename}/{date_fmt}"
+
+
 def setup_model_path(
     model_name: Optional[str],
     dataset: HasDatasetProperties,
@@ -184,17 +190,15 @@ def setup_model_path(
             "For FSDP, all ranks must checkpoint from/to the same directory, "
             "use train.py with --model_path or run_experiment with --log_ckpts"
         )
-    date = datetime.now()
-    date_fmt = date.strftime("%Y-%m-%d_%H-%M-%S")
     if model_name is None:
-        model_path = f"models/{dataset.name}/{date_fmt}"
+        basename = f"models/{dataset.name}"
     else:
         model_as_path = Path(model_name)
         if model_as_path.is_dir() and model_as_path.exists():
-            model_path = f"models/{dataset.name}/local_{model_as_path.name}/{date_fmt}"
+            basename = f"models/{dataset.name}/local_{model_as_path.name}"
         else:
-            model_path = f"models/{dataset.name}/{model_name}/{date_fmt}"
-    return model_path
+            basename = f"models/{dataset.name}/{model_name}"
+    return _get_model_path(basename)
 
 
 def setup_logging(
