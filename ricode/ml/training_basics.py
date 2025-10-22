@@ -170,6 +170,7 @@ def initialize_type_from_config(
     setup=False,
     setup_function_name=None,
     overrides=None,
+    raise_if_missing=True,
     **init_kwargs,
 ) -> InitializeType:
     config = load_config_from_name_or_path(name_or_path)
@@ -180,7 +181,11 @@ def initialize_type_from_config(
         if include_filepath_in_init is None and cls.include_filepath_in_init:
             include_filepath_in_init = True
 
-    kwargs = config[section_name]
+    kwargs = config.get(section_name, None)
+    if kwargs is None and raise_if_missing:
+        raise ValueError(section_name, "not in", config)
+    elif kwargs is None:
+        kwargs = {}
     if include_filepath_in_init:
         kwargs["file_path"] = str(name_or_path)
 
