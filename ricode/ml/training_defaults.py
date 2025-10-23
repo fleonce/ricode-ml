@@ -245,12 +245,44 @@ def evaluate_multikey_split_datasets(
                 result = func(model, ProxyTrainingArgs(args, key), split, dataloader_fn)  # type: ignore
                 metrics_per_key[key] = result
 
-            return MetricsDict(None, **metrics_per_key)
+            metrics = MetricsDict(None, **metrics_per_key)
+            return BasicMetrics.from_dict(metrics.to_dict())
         return func(model, args, split, dataloader_fn)
 
     return inner
 
 
+def multistage_evaluate_function(
+    *funcs: EvaluateProtocol[_T_cont, TDataset, THparams, _T_cov_metrics]
+):
+    if len(funcs) == 0:
+        return False
+
+    def inner(
+        model: _T_cont,
+        args: TrainingArgs[THparams, TDataset],
+        split: str,
+        dataloader_fn: DataLoaderProtocol[TDataset, THparams],
+    ) -> _T_cov_metrics | MetricsDict[_T_cov_metrics]:
+        metrics = None
+        for func in funcs:
+            func_metrics = func(
+                model,
+                args,
+                split,
+                dataloader_fn,
+            )
+            if metrics is None:
+                metrics = func_metrics
+            else:
+                for key, value in func_metrics.__dict__.items():
+                    setattr(metrics, key, value)
+        return metrics
+
+    return inner
+
+
+@evaluate_multikey_split_datasets
 def default_evaluate_function(
     model: TModel,
     args: TrainingArgs[THparams, TDataset],
@@ -260,7 +292,12 @@ def default_evaluate_function(
     device = model.device
 
     avg_loss = Mean(device=device)
-    for batch in tqdm(dataloader_fn(args, split, False), leave=False, position=0):
+    for batch in tqdm(
+        dataloader_fn(args, split, False),
+        leave=False,
+        position=0,
+        desc="Evaluating loss",
+    ):
         loss = model(**batch.to(device))[0]
 
         avg_loss.update(loss)
