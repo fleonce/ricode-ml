@@ -2,7 +2,7 @@ import functools
 import os
 import subprocess
 import sys
-from typing import Sequence
+from typing import Mapping, Sequence
 
 from with_argparse import with_argparse
 from with_argparse.configure_argparse import WithArgparse
@@ -51,7 +51,7 @@ def _check_screens_exist(
     return existing
 
 
-def _run_proc(args: Sequence[str]):
+def _run_proc(args: Sequence[str], env: Mapping[str, str] | None = None):
     return subprocess.run(
         args,
         shell=False,
@@ -60,10 +60,13 @@ def _run_proc(args: Sequence[str]):
         stdin=sys.stdin,
         stdout=sys.stdout,
         stderr=sys.stderr,
+        env=env,
     )
 
 
-@with_argparse(partial_parse=True, on_help=_on_help)
+@with_argparse(
+    partial_parse=True, partial_parse_pass_remaining_args=True, on_help=_on_help
+)
 def launch(
     train_script: str = "train.py",
     gpus: str = "1",
@@ -72,14 +75,16 @@ def launch(
     master_port: str = "12345",
     # internal argument:
     _help: bool = False,
+    _args: list[str] = None,
 ):
     screen_bin = _check_screen_exists()
 
     train_path = os.path.join(os.getcwd(), train_script)
     if os.path.exists(train_path):
-        command_to_run = [sys.executable, train_path, *sys.argv[1:]]
+        command_to_run = [sys.executable, train_path, *_args]
 
         if _help:
+            command_to_run.append("-h")
             process = _run_proc(command_to_run)
             return process.returncode
         else:
@@ -92,6 +97,8 @@ def launch(
             is_distributed = len(device_ids) > 1
 
             if not is_distributed:
+                os.environ["RANK"] = "0"
+                os.environ["WORLD_SIZE"] = "1"
                 return _run_proc(command_to_run).returncode
             else:
                 existing_screens = _check_screens_exist(

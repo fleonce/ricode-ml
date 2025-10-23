@@ -10,7 +10,7 @@ dependencies = [
     "torch==2.8.0",
     "torcheval==0.0.7",
     "matplotlib==3.10.6",
-    "with_argparse>=1.0.4,<1.0.6",
+    "with_argparse>=1.0.5rc3",
     "more-itertools>=10.6.0",
     "attrs==25.4.0",
 ]
