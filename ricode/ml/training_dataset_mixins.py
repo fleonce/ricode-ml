@@ -62,7 +62,7 @@ class TokenizerMixin:
         )
 
 
-@dataclasses.dataclass(kw_only=True)
+@dataclasses.dataclass(kw_only=True, repr=False)
 class TokenizerDataset(BasicDataset, TokenizerMixin):
     tokens_key: ClassVar[str] = "tokens"
     tokenize_kwargs: ClassVar[Optional[dict]] = None

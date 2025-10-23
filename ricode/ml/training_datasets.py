@@ -2,7 +2,6 @@ import dataclasses
 import functools
 import inspect
 import json
-import logging
 import os.path
 import warnings
 from collections import OrderedDict
@@ -120,7 +119,7 @@ def _resolve_split_info(value: Any):  # value is str or dict[str, str]
         return {key: _resolve_split_info(inner) for key, inner in value.items()}
 
 
-@dataclasses.dataclass(kw_only=True)
+@dataclasses.dataclass(kw_only=True, repr=False)
 class BasicDataset(NameableConfig):
     include_filepath_in_init: ClassVar[bool] = True
     storage_prefix: ClassVar[str] = ""
@@ -194,7 +193,7 @@ class BasicDataset(NameableConfig):
             return self.json_list_setup_examples
         return self.setup_examples
 
-    def list_splits(self, logger: logging.Logger):
+    def __repr__(self):
         def format_split(dataset):
             return repr(dataset).replace("\n", "\n  ")
 
@@ -216,8 +215,8 @@ class BasicDataset(NameableConfig):
                     f"keys={format_keys(dataset.shards[0].keys())}"
                     f")"
                 )
-            elif isinstance(dataset, dict):
-                if len(dataset) <= 3:
+            elif isinstance(dataset, Mapping):
+                if len(dataset) <= 3 or True:
                     formatted_dataset = [
                         "  " + format_dataset(key, dataset[key])
                         for key in sorted(dataset.keys())
@@ -236,12 +235,12 @@ class BasicDataset(NameableConfig):
             else:
                 return f"  {key}={dataset}"
 
-        info = [f"Loaded dataset {self.__class__.__name__}("]
+        info = [f"{self.__class__.__name__}("]
         for split in self.data.keys():
             if split not in self.split_names:
                 continue
             info.append(format_dataset(split, self.data[split]))
-        logger.info("\n".join(info))
+        return "\n".join(info)
 
     def inner_setup_examples(
         self,
