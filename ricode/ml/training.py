@@ -1498,6 +1498,9 @@ def _save_loss_plot(
             kwargs["post_fig_fn"](fig, axis)
 
         fig.savefig(output_file)
+        if not isinstance(output_file, Path):
+            output_file = Path(output_file)
+
         if kwargs.get("save_plot_copy_to_parent_dir", False):
             parent_file = output_file.parent.parent / output_file.name
             if score_steps.numel() <= 1:
