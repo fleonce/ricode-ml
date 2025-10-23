@@ -173,8 +173,9 @@ def save_checkpoint(
             dist.barrier()
 
 
-def _get_model_path(basename: str = "models"):
-    date = datetime.now()
+def _get_model_path(basename: str = "models", date: Optional[datetime] = None):
+    if date is None:
+        date = datetime.now()
     date_fmt = date.strftime("%Y-%m-%d_%H-%M-%S")
     return f"{basename}/{date_fmt}"
 
