@@ -62,7 +62,6 @@ from ricode.ml.training_basics import (
     MetricsDict,
     TensorboardLogger,
 )
-from ricode.ml.training_defaults import evaluate_multikey_split_datasets
 from ricode.ml.training_operators import safe_score_comparison
 from ricode.ml.training_types import (
     ConfigInitProtocol,
@@ -613,9 +612,6 @@ def _call_evaluate_function(
     split: str,
     dataloader_fn: DataLoaderProtocol[TDataset, THparams],
 ):
-    if evaluate_fn is not evaluate_multikey_split_datasets:
-        evaluate_fn = evaluate_multikey_split_datasets(evaluate_fn)
-
     metrics = evaluate_fn(
         model,
         args,
