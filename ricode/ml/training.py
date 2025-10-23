@@ -1355,7 +1355,7 @@ def _save_loss_plot(
         smoothed_gradient_norm_history = smooth_curve(grad_norm_history, 0.9)
 
         plottable_series = {
-            key: torch.stack((score_steps, value))
+            key: (torch.stack((score_steps, value)) if value.dim() == 1 else value)
             for key, value in score_history.items()
         }
         plottable_series["_loss"] = torch.stack(
