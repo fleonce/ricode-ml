@@ -1312,7 +1312,8 @@ def _save_loss_plot(
             return k
 
         score_names = {key: _score_name(key) for key in score_history.keys()}
-        score_names[optimize_for] = score_names[optimize_for] + " (*)"
+        if optimize_for in score_names:
+            score_names[optimize_for] = score_names[optimize_for] + " (*)"
 
         plots = kwargs.get(
             "plots",
