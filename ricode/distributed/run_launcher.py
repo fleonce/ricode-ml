@@ -45,7 +45,7 @@ def _check_screens_exist(
     existing = []
     for rank, device_id in enumerate(device_ids):
         device_screen_name = _screen_name(screen_pattern, device_id + 1)
-        screen_list = subprocess.run(f"{screen_bin} ls {device_screen_name}")
+        screen_list = subprocess.run(f"{screen_bin} ls {device_screen_name}".split())
         if screen_list.returncode != 0:
             existing.append(device_screen_name)
     return existing
