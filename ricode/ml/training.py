@@ -32,8 +32,10 @@ from typing import (
 )
 
 import numpy as np
+import torch
 import torch.cuda
 import torch.distributed as dist
+import torch.distributed.checkpoint.state_dict
 import torch.version
 from more_itertools import first
 from torch import Generator
@@ -339,18 +341,29 @@ def setup_profiler_context(
 
 def write_reproducibility_checkpoint(
     model_path: str,
+    args: TrainingArgs[THparams, TDataset],
     model: Module,
     optimizer: Optimizer,
-    hparams: THparams,
     num_epochs: int,
     reproducibility_variables: Mapping[str, Any] | None,
 ):
     reproducibility_variables = reproducibility_variables or {}
 
+    if args.use_fsdp:
+        state_dict, optimizer_state_dict = (
+            torch.distributed.checkpoint.state_dict.get_state_dict(
+                model,
+                optimizer,
+            )
+        )
+    else:
+        state_dict = model.state_dict()
+        optimizer_state_dict = optimizer.state_dict()
+
     repro_dict = {
-        "model": model.state_dict(),
-        "optimizer": optimizer.state_dict(),
-        "hparams": hparams,
+        "model": state_dict,
+        "optimizer": optimizer_state_dict,
+        "hparams": args.hparams,
         "num_epochs": num_epochs,
     }
 
@@ -359,11 +372,13 @@ def write_reproducibility_checkpoint(
 
     torch.save(repro_dict, f"{model_path}/repro.pt")
     with open(f"{model_path}/hparams.json", "w") as f:
-        f.write(hparams.to_json() + "\n")
+        f.write(args.hparams.to_json() + "\n")
 
     for key, value in reproducibility_variables.items():
         with open(f"{model_path}/{key}.json", "w") as f:
             json.dump(value, f)
+
+    distributed_barrier()
 
 
 def load_checkpoint(
@@ -886,12 +901,12 @@ def do_train(
 
     if not memory_checkpoints:
         write_reproducibility_checkpoint(
-            model_path=model_path,
-            model=model,
-            optimizer=optimizer,
-            hparams=hparams,
-            num_epochs=num_epochs,
-            reproducibility_variables=reproducibility_variables,
+            model_path,
+            args,
+            model,
+            optimizer,
+            num_epochs,
+            reproducibility_variables,
         )
 
     postfix: MutableMapping[str, Any] = collections.OrderedDict(
