@@ -13,7 +13,11 @@ from torch.distributed.fsdp import (
 from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy
 
 from ricode.ml.distributed.utils import distributed_setup
-from ricode.ml.model_setup.utils import guess_model_block_type, identity
+from ricode.ml.model_setup.utils import (
+    guess_model_block_type,
+    guess_model_block_types,
+    identity,
+)
 from ricode.ml.training_types import ModelUpdateProtocol, TModel
 
 
@@ -62,12 +66,13 @@ def setup_mixed_precision_policy(
 
 
 def setup_fully_sharded_dp_model(
-    wrapping_block: type[torch.nn.Module] | None = None,
+    wrapping_block: type[torch.nn.Module] | set[type[torch.nn.Module]] | None = None,
     sharding_strategy: ShardingStrategy = ShardingStrategy.FULL_SHARD,
     mixed_precision_policy: MixedPrecision | None = None,
     use_orig_params: bool = False,
     limit_all_gathers: bool = True,
     sync_module_states: bool = True,
+    allow_multiple_wrapping_blocks: bool = False,
     *,
     disable: bool = False,
 ) -> ModelUpdateProtocol[TModel]:
@@ -94,10 +99,25 @@ def setup_fully_sharded_dp_model(
 
         nonlocal wrapping_block
         if wrapping_block is None:
-            wrapping_block = guess_model_block_type(module)
+            if not allow_multiple_wrapping_blocks:
+                wrapping_block = guess_model_block_type(module)
+            else:
+                wrapping_block = guess_model_block_types(module)
+        else:
+            if (
+                not allow_multiple_wrapping_blocks
+                and isinstance(wrapping_block, set)
+                and len(wrapping_block) > 1
+            ):
+                raise ValueError(
+                    f"{allow_multiple_wrapping_blocks=}, but len({wrapping_block!r}) > 1"
+                )
+
+        if not isinstance(wrapping_block, set):
+            wrapping_block = {wrapping_block}
 
         wrapping_policy = partial(
-            transformer_auto_wrap_policy, transformer_layer_cls={wrapping_block}
+            transformer_auto_wrap_policy, transformer_layer_cls=wrapping_block
         )
 
         module = FullyShardedDataParallel(
