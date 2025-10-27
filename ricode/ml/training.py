@@ -304,10 +304,15 @@ def train_logging(
     if load_ckpt is not None:
         logger.info(f"Loaded model from {load_ckpt.as_posix()}")
     numel = sum(param.numel() for param in model.parameters())
+    num_bytes = sum(
+        param.numel() * param.dtype.itemsize for param in model.parameters()
+    )
     no_grad_numel = sum(
         param.numel() for param in model.parameters() if not param.requires_grad
     )
-    logger.info(str(numel / 1e6) + f" M params ({numel} total)")
+    logger.info(
+        f"{numel / 1e6:.4f} M params ({numel} total) -- {num_bytes / 1e9} GiB in VRAM"
+    )
     if no_grad_numel > 0:
         logger.info(str((numel - no_grad_numel) / 1e6) + " M activated params")
 
