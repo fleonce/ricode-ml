@@ -17,8 +17,17 @@ def _screen_name(pattern, i):
 
 
 def _dispatch_command(screen_bin, session_name, cmd):
-    proc = subprocess.run([screen_bin, "-S", session_name, "-X", "stuff", cmd + "\n"])
-    assert proc.returncode == 0, f"Could not dispatch command '{cmd}' to {session_name}"
+    arguments = [screen_bin, "-x", session_name, "-X", "stuff", cmd + "\n"]
+    proc = subprocess.run(
+        arguments,
+        capture_output=True,
+        text=True,
+    )
+    arguments[-1] = arguments[-1][:-1]
+    print(" ".join(arguments))
+    assert (
+        proc.returncode == 0
+    ), f"Could not dispatch command '{cmd}' to {session_name}: {proc.stdout,proc.stderr}"
 
 
 def _parse_gpus(gpus: str) -> list[int]:
@@ -45,13 +54,31 @@ def _check_screens_exist(
     existing = []
     for rank, device_id in enumerate(device_ids):
         device_screen_name = _screen_name(screen_pattern, device_id + 1)
-        screen_list = subprocess.run(f"{screen_bin} ls {device_screen_name}".split())
-        if screen_list.returncode != 0:
+        screen_list = subprocess.run(
+            f"{screen_bin} -ls {device_screen_name}".split(),
+            capture_output=True,
+            text=True,
+        )
+        if screen_list.returncode == 0:
             existing.append(device_screen_name)
     return existing
 
 
+def _check_inside_primary_screen(screen_pattern: str, device_id: int) -> bool:
+    device_screen_name = _screen_name(screen_pattern, device_id)
+    if "STY" in os.environ:
+        inside_name = os.environ["STY"].split(".")[1]
+        return inside_name == device_screen_name
+    else:
+        return False
+
+
+def _check_inside_any_screen():
+    return "STY" in os.environ and len(os.environ["STY"]) > 0
+
+
 def _run_proc(args: Sequence[str], env: Mapping[str, str] | None = None):
+    print(" ".join(args))
     return subprocess.run(
         args,
         shell=False,
@@ -64,8 +91,39 @@ def _run_proc(args: Sequence[str], env: Mapping[str, str] | None = None):
     )
 
 
+def _remove_first_script_arg(func):
+    @functools.wraps(func)
+    def wrapper():
+        if len(sys.argv) <= 1:
+            raise ValueError(sys.argv)
+        first_real_arg = sys.argv[1]
+        sys.argv = [sys.argv[0], *sys.argv[2:]]
+        return func(first_real_arg)
+
+    return wrapper
+
+
+def nvml_setup(func):
+    @functools.wraps(func)
+    def wrapper():
+        from pynvml import nvmlInit, nvmlShutdown
+
+        try:
+            nvmlInit()
+            return func()
+        finally:
+            nvmlShutdown()
+
+    return wrapper
+
+
+@nvml_setup
+@_remove_first_script_arg
 @with_argparse(
-    partial_parse=True, partial_parse_pass_remaining_args=True, on_help=_on_help
+    partial_parse=True,
+    partial_parse_pass_remaining_args=True,
+    on_help=_on_help,
+    ignore_keys={"train_script"},
 )
 def launch(
     train_script: str = "train.py",
@@ -101,10 +159,22 @@ def launch(
                 os.environ["WORLD_SIZE"] = "1"
                 return _run_proc(command_to_run).returncode
             else:
+                inside_primary = _check_inside_primary_screen(
+                    screen_pattern, device_ids[0] + 1
+                )
+                if not inside_primary and _check_inside_any_screen():
+                    print(
+                        "Must not be inside a screen besides the primary one to launch a training job"
+                    )
+                    return 1
+
                 existing_screens = _check_screens_exist(
                     screen_bin, screen_pattern, device_ids
                 )
-                if len(existing_screens) > 0:
+                rank_zero_dispatch = False
+                if len(existing_screens) == world_size and inside_primary:
+                    rank_zero_dispatch = True
+                elif len(existing_screens) > 0:
                     print(
                         "The following screens already exist, "
                         "change the pattern or remove the screens: ",
@@ -112,16 +182,21 @@ def launch(
                     )
                     return 1
 
-                import torch.cuda
+                from pynvml import nvmlDeviceGetCount
 
-                if len(device_ids) > torch.cuda.device_count():
+                max_gpus = nvmlDeviceGetCount()
+
+                if len(device_ids) > max_gpus and False:
                     print(
                         f"Using more gpus ({len(device_ids)}) than available "
-                        f"on this system ({torch.cuda.device_count()})"
+                        f"on this system ({max_gpus})"
                     )
                     return 1
 
                 for rank, device_id in enumerate(device_ids):
+                    if rank == 0 and rank_zero_dispatch:
+                        continue
+
                     device_screen_name = _screen_name(screen_pattern, device_id + 1)
 
                     dispatch = functools.partial(
@@ -130,12 +205,14 @@ def launch(
                         device_screen_name,
                     )
 
-                    process: subprocess.CompletedProcess = subprocess.run(
-                        [screen_bin, "-dmS", device_screen_name, "bash"]
-                    )
-                    assert (
-                        process.returncode == 0
-                    ), f"Could not create screen for {device_screen_name}"
+                    if device_screen_name not in existing_screens:
+                        print(f"{screen_bin} -dmS {device_screen_name} bash")
+                        process: subprocess.CompletedProcess = subprocess.run(
+                            [screen_bin, "-dmS", device_screen_name, "bash"]
+                        )
+                        assert (
+                            process.returncode == 0
+                        ), f"Could not create screen for {device_screen_name}"
 
                     dispatch("export TMOUT=0")
                     if is_distributed:
@@ -147,9 +224,22 @@ def launch(
                         )
                     else:
                         dispatch(f"export CUDA_VISIBLE_DEVICES={device_id}")
-                    dispatch("cd " + os.getcwd())
-                    dispatch(" ".join(command_to_run))
+                    dispatch("cd " + repr(os.getcwd()))
+                    dispatch(" ".join(map(repr, command_to_run)))
+
+                if rank_zero_dispatch:
+                    os.environ["RANK"] = "0"
+                    os.environ["WORLD_SIZE"] = str(world_size)
+                    os.environ["CUDA_LOCAL_DEVICE"] = str(device_ids[0])
+                    os.environ["MASTER_ADDR"] = master_address
+                    os.environ["MASTER_PORT"] = master_port
+                    return _run_proc(command_to_run).returncode
+                print(f"Launched {world_size} procs with {' '.join(command_to_run)!r}")
                 return 0
     else:
         print("Cannot find", train_path, "aborting ...", file=sys.stderr)
         return 1
+
+
+if __name__ == "__main__":
+    launch()
