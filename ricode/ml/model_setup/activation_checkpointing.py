@@ -9,6 +9,7 @@ from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
 )
 from torch.utils.checkpoint import create_selective_checkpoint_contexts
 
+from ricode.ml.model_setup.JobConfig import ACConfig
 from ricode.ml.model_setup.utils import (
     guess_model_block_type,
     guess_model_block_types,
@@ -49,6 +50,26 @@ def setup_blockwise_activation_checkpointing(
         return module
 
     return _model_init
+
+
+def _setup_ac(
+    module: torch.nn.Module,
+    config: ACConfig,
+):
+    if config.mode == "blockwise":
+        _setup_blockwise_ac(module, config)
+    elif config.mode == "selective":
+        raise NotImplementedError(config)
+    else:
+        raise ValueError(config.mode)
+
+
+def _setup_blockwise_ac(
+    module: torch.nn.Module,
+    config: ACConfig,
+    transformer_blocks: list[type[torch.nn.Module]] | None = None,
+):
+    raise NotImplementedError("todo")
 
 
 def setup_selective_activation_checkpointing(
