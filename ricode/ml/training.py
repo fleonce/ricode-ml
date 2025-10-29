@@ -791,9 +791,9 @@ def do_train(
         device = "cpu" if not torch.cuda.is_available() else "cuda:0"
 
     if device is not None and device.startswith("cuda:"):
-        from pynvml import nvmlGetDeviceHandleByIndex
+        from pynvml import nvmlDeviceGetHandleByIndex
 
-        device_handle = nvmlGetDeviceHandleByIndex(int(device[len("cuda:") :]))
+        device_handle = nvmlDeviceGetHandleByIndex(int(device[len("cuda:") :]))
     else:
         device_handle = None
 
