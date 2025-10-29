@@ -7,9 +7,12 @@ from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
     checkpoint_wrapper,
     CheckpointImpl,
 )
-from torch.utils.checkpoint import create_selective_checkpoint_contexts
+from torch.utils.checkpoint import (
+    CheckpointPolicy,
+    create_selective_checkpoint_contexts,
+)
 
-from ricode.ml.model_setup.JobConfig import ACConfig
+from ricode.ml.model_setup.job_config import ACConfig
 from ricode.ml.model_setup.utils import (
     guess_model_block_type,
     guess_model_block_types,
@@ -56,20 +59,67 @@ def _setup_ac(
     module: torch.nn.Module,
     config: ACConfig,
 ):
-    if config.mode == "blockwise":
-        _setup_blockwise_ac(module, config)
-    elif config.mode == "selective":
-        raise NotImplementedError(config)
-    else:
-        raise ValueError(config.mode)
+    blocks = guess_model_block_types(module)
+    if len(blocks) > 1 and not config.allow_multiple_blocks:
+        raise ValueError(
+            f"Found multiple model block types, unable to guess the right one: {blocks!r}"
+        )
+
+    for name, submodule in module.named_modules():
+        if type(submodule) in blocks:
+            # we found a module that is a transformer block
+            if config.mode == "blockwise" and False:
+                _setup_blockwise_ac(submodule, config)
+            elif config.mode == "selective" or True:
+                _setup_selective_ac(submodule, config)
+            else:
+                raise ValueError(config.mode)
+            print(f"Applied activation checkpointing to {name}")
+    return None
+
+
+def _resolve_ops(ops: list[str]):
+    def _resolve_op(op: str, parent=None):
+        if op.startswith("torch."):
+            return _resolve_op(op[len("torch.") :], torch)
+        if "." in op:
+            base, rest = op.split(".", maxsplit=1)
+            return _resolve_op(rest, getattr(parent, base))
+        else:
+            return getattr(parent, op)
+
+    return [_resolve_op(o) for o in ops]
+
+
+def _setup_selective_ac(
+    module: torch.nn.Module,
+    config: ACConfig,
+):
+    ops = _resolve_ops(config.selective_ac_save_list)
+
+    def policy_fn(ctx, op, *args, **kwargs):
+        if op in ops:
+            return CheckpointPolicy.MUST_SAVE
+        else:
+            return CheckpointPolicy.PREFER_RECOMPUTE
+
+    return checkpoint_wrapper(
+        module,
+        context_fn=partial(create_selective_checkpoint_contexts, policy_fn),
+        preserve_prng_state=False,
+        early_stop=False,
+    )
 
 
 def _setup_blockwise_ac(
     module: torch.nn.Module,
     config: ACConfig,
-    transformer_blocks: list[type[torch.nn.Module]] | None = None,
 ):
-    raise NotImplementedError("todo")
+    checkpoint_wrapper(
+        module,
+        preserve_prng_state=False,
+        early_stop=False,
+    )
 
 
 def setup_selective_activation_checkpointing(

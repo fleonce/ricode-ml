@@ -44,8 +44,9 @@ def distributed_world_size() -> int:
     return 1
 
 
-@functools.lru_cache(1)
+# @functools.lru_cache(1)
 def is_rank_zero() -> bool:
+    print(is_distributed(), distributed_rank(), os.environ.get("RANK", None))
     return not is_distributed() or distributed_rank() == 0
 
 
@@ -68,7 +69,7 @@ def distributed_setup():
     world_size = int(os.environ.get("WORLD_SIZE", "1"))
 
     if dist.is_initialized():
-        return rank, world_size, torch.cuda.current_device()
+        return rank, world_size, f"cuda:{torch.cuda.current_device()}"
 
     if "MASTER_ADDR" not in os.environ:
         os.environ["MASTER_ADDR"] = "localhost"

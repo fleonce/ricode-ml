@@ -6,13 +6,15 @@ import torch.cuda.nccl as nccl
 import torch.distributed as dist
 from more_itertools.more import first
 from torch.distributed.fsdp import (
+    fully_shard,
     FullyShardedDataParallel,
     MixedPrecision,
+    MixedPrecisionPolicy,
     ShardingStrategy,
 )
 from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy
 
-from ricode.ml.distributed.utils import distributed_setup
+from ricode.ml.model_setup.job_config import ParallelizeConfig
 from ricode.ml.model_setup.utils import (
     guess_model_block_type,
     guess_model_block_types,
@@ -65,6 +67,31 @@ def setup_mixed_precision_policy(
     )
 
 
+def setup_fsdp2(
+    module: torch.nn.Module,
+    config: ParallelizeConfig,
+):
+    blocks = guess_model_block_types(module)
+    if len(blocks) > 1 and not config.allow_multiple_blocks:
+        raise ValueError(
+            f"Found multiple model block types, unable to guess the right one: {blocks!r}"
+        )
+
+    mp_policy = MixedPrecisionPolicy(
+        getattr(torch, config.param_dtype),
+        getattr(torch, config.reduce_dtype),
+        cast_forward_inputs=True,
+    )
+
+    kwargs = {"mp_policy": mp_policy, "reshard_after_forward": True}
+    for name, submodule in module.named_modules():
+        if type(submodule) in blocks:
+            fully_shard(submodule, **kwargs)
+
+    for child in module.children():
+        fully_shard(child, **kwargs)
+
+
 def setup_fully_sharded_dp_model(
     wrapping_block: type[torch.nn.Module] | set[type[torch.nn.Module]] | None = None,
     sharding_strategy: ShardingStrategy = ShardingStrategy.FULL_SHARD,
@@ -86,8 +113,6 @@ def setup_fully_sharded_dp_model(
         module.to_empty(device=torch.device("cuda"), recurse=False)
 
     def _model_init(module: TModel) -> TModel:
-        rank, world_size, device = distributed_setup()
-
         if rank > 0:
             meta_device = torch.device("meta")
             param_device = first(module.parameters()).device

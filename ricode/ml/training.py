@@ -38,13 +38,8 @@ import torch.distributed as dist
 import torch.distributed.checkpoint.state_dict
 import torch.version
 from more_itertools import first
-from torch import Generator
-from torch.distributed.fsdp import (
-    FullOptimStateDictConfig,
-    FullStateDictConfig,
-    FullyShardedDataParallel as FSDP,
-    StateDictType,
-)
+from torch import Generator, NoneType
+from torch.distributed.checkpoint.state_dict import get_state_dict
 from torch.nn import Module
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
@@ -53,11 +48,22 @@ from tqdm.contrib.logging import logging_redirect_tqdm
 from transformers import PreTrainedModel
 
 from ricode.ml import training_operators
+from ricode.ml._training.utils import (
+    estimated_model_size,
+    num_gradient_parameters,
+    num_local_parameters,
+    num_parameters,
+)
 from ricode.ml.dataloaders import Batch, ProfilingDataLoaderIterator
 from ricode.ml.distributed import distributed_barrier
-from ricode.ml.distributed.utils import finalise_distributed_environment_after_exit
+from ricode.ml.distributed.fully_sharded import _is_fully_sharded_model
+from ricode.ml.distributed.utils import (
+    distributed_setup,
+    finalise_distributed_environment_after_exit,
+)
 from ricode.ml.model_setup.fully_sharded_dp import _is_fully_sharded_dp_model
-from ricode.ml.model_setup.utils import setup_model
+from ricode.ml.model_setup.job_config import JobConfig
+from ricode.ml.model_setup.setup import setup_model
 from ricode.ml.training_basics import (
     BasicHparams,
     BasicMetrics,
@@ -84,6 +90,7 @@ from ricode.ml.training_utils import (
     is_clean_working_tree,
     move_to_device,
 )
+from ricode.nvidia.nvml import setup_nvml
 
 try:
     import matplotlib.pyplot as plt
@@ -131,20 +138,12 @@ def save_checkpoint(
     if not disable:
         model_dir = Path(model_path)
         save_pretrained_kwargs = {}
-        if args.use_fsdp:
-            FSDP.set_state_dict_type(
-                model,
-                StateDictType.FULL_STATE_DICT,
-                FullStateDictConfig(rank0_only=True, offload_to_cpu=True),
-                FullOptimStateDictConfig(rank0_only=True, offload_to_cpu=True),
-            )
-            state_dict = model.state_dict()
-            optimizer_state_dict = FSDP.optim_state_dict(model, optimizer)
-            if args.rank == 0:
-                save_pretrained_kwargs["state_dict"] = state_dict
-                save_pretrained_kwargs["is_main_process"] = True
-        else:
-            optimizer_state_dict = optimizer.state_dict()
+
+        model_state_dict, optimizer_state_dict = get_state_dict(model, optimizer)
+        if args.rank == 0:
+            save_pretrained_kwargs["state_dict"] = model_state_dict
+            save_pretrained_kwargs["is_main_process"] = True
+
         if memory_checkpoints:
             if "state_dict" not in save_pretrained_kwargs:
                 save_pretrained_kwargs["state_dict"] = model.state_dict()
@@ -153,11 +152,11 @@ def save_checkpoint(
             _checkpoint_state_dict["state_dict"] = move_to_device(
                 save_pretrained_kwargs["state_dict"], "cpu"
             )
-            if args.use_fsdp:
+            if args.job_config.parallelize.dp_mode != "none":
                 dist.barrier()
             return
 
-        if not args.use_fsdp or args.rank == 0:
+        if args.rank == 0:
             model.save_pretrained(model_path, **save_pretrained_kwargs)
 
         optimizer_state = {
@@ -171,7 +170,7 @@ def save_checkpoint(
 
         if args.rank == 0:
             torch.save(optimizer_state, model_dir / "optimizer.bin")
-        if args.use_fsdp:
+        if args.job_config.parallelize.dp_mode != "none":
             dist.barrier()
 
 
@@ -185,11 +184,11 @@ def _get_model_path(basename: str = "models", date: Optional[datetime] = None):
 def setup_model_path(
     model_name: Optional[str],
     dataset: HasDatasetProperties,
-    use_fsdp: bool,
+    job_config: JobConfig,
 ) -> str:
-    if use_fsdp:
+    if job_config.parallelize.dp_mode != "none":
         raise ValueError(
-            "For FSDP, all ranks must checkpoint from/to the same directory, "
+            "For distributed training, all ranks must checkpoint from/to the same directory, "
             "use train.py with --model_path or run_experiment with --log_ckpts"
         )
     if model_name is None:
@@ -236,7 +235,7 @@ def reproducibility_logging(
     dataset: HasDatasetProperties,
     hparams: THparams,
     use_bfloat16: bool,
-    use_fsdp: bool,
+    job_config: JobConfig,
     use_tensorboard: bool,
 ) -> TensorboardLogger:
     logger.info(
@@ -259,7 +258,7 @@ def reproducibility_logging(
         if os.environ.get("ITER_LOG_DIFF", "1") == "1":
             logger.warning(get_working_tree_diff())
     logger.info(f"Seed = {seed}")
-    if use_fsdp:
+    if job_config.parallelize.dp_mode != "none":
         if "RANK" not in os.environ:
             raise ValueError(
                 "RANK must be specified as an environment variable for FSDP"
@@ -268,7 +267,9 @@ def reproducibility_logging(
             raise ValueError(
                 "WORLD_SIZE must be specified as an environment variable for FSDP"
             )
-        logger.info(f"Rank = {os.environ['RANK']} of {os.environ['WORLD_SIZE']}")
+        logger.info(
+            f"Rank = {int(os.environ['RANK']) + 1} of {os.environ['WORLD_SIZE']}"
+        )
     torch.set_num_threads(2)
 
     return TensorboardLogger(
@@ -290,38 +291,42 @@ def reproducibility_logging(
 
 def train_logging(
     model: TModel,
-    hparams: THparams,
+    args: TrainingArgs[THparams, TDataset],
     logger: Logger,
-    dataset: HasDatasetProperties,
     load_ckpt: Optional[Path],
 ):
     logger.info(model)
 
     # print dataset info
-    logger.info(repr(dataset))
+    logger.info(repr(args.dataset))
 
-    logger.info(hparams.to_json())
+    logger.info(args.hparams.to_json())
     if load_ckpt is not None:
         logger.info(f"Loaded model from {load_ckpt.as_posix()}")
-    numel = sum(param.numel() for param in model.parameters())
-    num_bytes = sum(
-        param.numel() * param.dtype.itemsize for param in model.parameters()
-    )
-    no_grad_numel = sum(
-        param.numel() for param in model.parameters() if not param.requires_grad
-    )
-    logger.info(
-        f"{numel / 1e6:.4f} M params ({numel} total) -- {num_bytes / 1e9} GiB in VRAM"
-    )
-    if no_grad_numel > 0:
-        logger.info(str((numel - no_grad_numel) / 1e6) + " M activated params")
+
+    num_params = num_parameters(model)
+    num_bytes = estimated_model_size(model)
+    num_grad_params = num_gradient_parameters(model)
+
+    message = f"{num_params / 1e6:.4f} M params -- {num_bytes / 1e9:.2f} GiB in VRAM"
+
+    if args.job_config.parallelize.dp_mode != "none":
+        num_local_params = num_local_parameters(model)
+        dp_mode = args.job_config.parallelize.dp_mode
+
+        message += f" --  {num_local_params / 1e6} M params local ({dp_mode})"
+
+    if num_grad_params < num_params:
+        message += f" -- {num_grad_params / 1e6:.4f} M activated params"
+
+    logger.info(message)
 
 
 def setup_precision_context(
     use_bfloat16: bool,
-    use_fsdp: bool,
+    job_config: JobConfig,
 ) -> ContextManager:
-    if use_bfloat16 and not use_fsdp:
+    if use_bfloat16 and job_config.parallelize.dp_mode != "fsdp":
         return torch.amp.autocast("cuda", enabled=True, dtype=torch.bfloat16)
     return contextlib.nullcontext()
 
@@ -354,16 +359,12 @@ def write_reproducibility_checkpoint(
 ):
     reproducibility_variables = reproducibility_variables or {}
 
-    if args.use_fsdp:
-        state_dict, optimizer_state_dict = (
-            torch.distributed.checkpoint.state_dict.get_state_dict(
-                model,
-                optimizer,
-            )
+    state_dict, optimizer_state_dict = (
+        torch.distributed.checkpoint.state_dict.get_state_dict(
+            model,
+            optimizer,
         )
-    else:
-        state_dict = model.state_dict()
-        optimizer_state_dict = optimizer.state_dict()
+    )
 
     repro_dict = {
         "model": state_dict,
@@ -670,7 +671,7 @@ def do_evaluate(
     # restore training mode
     model.train(old_state)
 
-    if args.use_fsdp:
+    if args.job_config.parallelize.dp_mode != "none":
         distributed_barrier()  # wait for all GPU procs to finish evaluation
 
     torch.cuda.empty_cache()
@@ -734,6 +735,7 @@ def do_evaluate(
 
 
 @finalise_distributed_environment_after_exit
+@setup_nvml
 def do_train(
     dataset: TDataset,
     hparams: THparams,
@@ -752,7 +754,8 @@ def do_train(
     seed: int = 42,
     use_tqdm: bool = True,
     use_bfloat16: bool = False,
-    use_fsdp: bool = False,
+    use_fsdp: NoneType = None,
+    job_config: Optional[JobConfig] = None,
     use_tensorboard: bool = True,
     num_epochs: int = 0,
     dont_ckpt: bool = False,
@@ -787,6 +790,15 @@ def do_train(
     if device is None:
         device = "cpu" if not torch.cuda.is_available() else "cuda:0"
 
+    if use_fsdp is not None:
+        warnings.warn(
+            "use_fsdp is deprecated and will be removed soon", DeprecationWarning, 2
+        )
+
+    if job_config is None:
+        job_config = JobConfig()
+    use_fsdp = job_config.parallelize.dp_mode == "fsdp"
+
     if hooks is None:
         hooks = Hooks()
 
@@ -808,12 +820,15 @@ def do_train(
     generator = setup_seed(seed)
     rank, world_size = 0, 1
 
+    if job_config.parallelize.dp_mode != "none":
+        rank, world_size, device = distributed_setup()
+
     track_metrics = (track_metrics or set()) | {hparams.optimize_for, "_steps"}
     if not model_path:
         model_path = setup_model_path(
             transformer,
             dataset,
-            use_fsdp,
+            job_config,
         )
 
     if logger is None:
@@ -827,7 +842,7 @@ def do_train(
         dataset,
         hparams,
         use_bfloat16,
-        use_fsdp,
+        job_config,
         use_tensorboard,
     )
 
@@ -837,7 +852,7 @@ def do_train(
         generator=generator,
         hparams=hparams,
         dataset=dataset,
-        use_fsdp=use_fsdp,
+        job_config=job_config,
         use_tqdm=use_tqdm,
         train_logger=train_logger,
         scores_to_track=track_metrics,
@@ -850,7 +865,7 @@ def do_train(
     config = config_init_fn(dataset, hparams)
 
     if model_init is None:
-        model_init = setup_model(model_class, for_fully_sharded_dp=use_fsdp)
+        model_init = setup_model(model_class, job_config)
 
     if load_ckpt:
         model = model_init(config, str(load_ckpt))
@@ -861,17 +876,24 @@ def do_train(
     check_parameters_for_nan(model, strict=not allow_nan_parameters)
 
     # log model arch, hparams, # params, model features
-    train_logging(model, hparams, logger, dataset, load_ckpt)
+    train_logging(model, args, logger, load_ckpt)
 
     # call the model init hook
     hooks.on_model_init(model, args)
 
     compute_loss_context_mngr = setup_precision_context(
         use_bfloat16,
-        use_fsdp,
+        job_config,
     )
 
-    if not use_fsdp:
+    if (
+        job_config.parallelize.dp_mode == "fsdp"
+        and not _is_fully_sharded_model(model)
+        and False
+    ):
+        raise ValueError(f"{use_fsdp=} but model is not sharded", model)
+
+    if not _is_fully_sharded_model(model):
         model = model.to(device)
 
     (total_steps, steps_to_train, interval_to_eval_at, steps_per_epoch) = (
@@ -1014,7 +1036,7 @@ def do_train(
 
                 # (10) sync statistics across devices,
                 if args.train_steps % hparams.gradient_accumulation == 0:
-                    if use_fsdp:
+                    if job_config.parallelize.dp_mode != "none":
                         dist.all_reduce(stats, dist.ReduceOp.SUM)
                     local_stats = stats.clone().cpu()
 
@@ -1118,7 +1140,7 @@ def do_train(
             if stop_after_epoch:
                 break
 
-    if use_fsdp:
+    if job_config.parallelize.dp_mode != "none":
         logger.info("Waiting at save barrier")
         distributed_barrier()
     if not dont_ckpt and args.best_score is not None:

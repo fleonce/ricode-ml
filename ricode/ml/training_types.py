@@ -27,6 +27,7 @@ from torch import Generator
 from torch.utils.data import DataLoader
 from transformers import PreTrainedModel
 
+from ricode.ml.model_setup.job_config import JobConfig
 from ricode.ml.training_basics import (
     BasicHparams,
     BasicMetrics,
@@ -191,7 +192,7 @@ class TrainingArgs(Generic[THparams, TDataset]):
     console_logger: logging.Logger
 
     # flags
-    use_fsdp: bool
+    job_config: JobConfig
     use_tqdm: bool
 
     # tracking progress for training
@@ -204,6 +205,10 @@ class TrainingArgs(Generic[THparams, TDataset]):
         dataclasses.field(default_factory=lambda: defaultdict(list))
     )
     scores_to_track: set[str] = dataclasses.field(default_factory=set)
+
+    @property
+    def use_fsdp(self):
+        return self.job_config.parallelize.dp_mode == "fsdp"
 
     @property
     def rank(self):

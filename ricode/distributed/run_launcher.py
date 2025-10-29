@@ -7,6 +7,8 @@ from typing import Mapping, Sequence
 from with_argparse import with_argparse
 from with_argparse.configure_argparse import WithArgparse
 
+from ricode.nvidia.nvml import setup_nvml
+
 
 def _on_help(args: WithArgparse):
     args.argparse.print_help()
@@ -25,9 +27,11 @@ def _dispatch_command(screen_bin, session_name, cmd):
     )
     arguments[-1] = arguments[-1][:-1]
     print(" ".join(arguments))
-    assert (
-        proc.returncode == 0
-    ), f"Could not dispatch command '{cmd}' to {session_name}: {proc.stdout,proc.stderr}"
+    if proc.returncode != 0:
+        print(
+            f"Could not dispatch command '{cmd}' to {session_name}: {proc.stdout, proc.stderr}"
+        )
+        exit(1)
 
 
 def _parse_gpus(gpus: str) -> list[int]:
@@ -103,21 +107,7 @@ def _remove_first_script_arg(func):
     return wrapper
 
 
-def nvml_setup(func):
-    @functools.wraps(func)
-    def wrapper():
-        from pynvml import nvmlInit, nvmlShutdown
-
-        try:
-            nvmlInit()
-            return func()
-        finally:
-            nvmlShutdown()
-
-    return wrapper
-
-
-@nvml_setup
+@setup_nvml
 @_remove_first_script_arg
 @with_argparse(
     partial_parse=True,
@@ -171,16 +161,7 @@ def launch(
                 existing_screens = _check_screens_exist(
                     screen_bin, screen_pattern, device_ids
                 )
-                rank_zero_dispatch = False
-                if len(existing_screens) == world_size and inside_primary:
-                    rank_zero_dispatch = True
-                elif len(existing_screens) > 0:
-                    print(
-                        "The following screens already exist, "
-                        "change the pattern or remove the screens: ",
-                        *list(map(repr, existing_screens)),
-                    )
-                    return 1
+                rank_zero_dispatch = inside_primary
 
                 from pynvml import nvmlDeviceGetCount
 

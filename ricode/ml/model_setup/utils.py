@@ -6,8 +6,6 @@ import more_itertools
 import torch.nn
 
 from ricode.ml.distributed.utils import is_distributed, is_rank_zero
-from ricode.ml.model_setup.activation_checkpointing import _setup_ac
-from ricode.ml.model_setup.JobConfig import JobConfig
 from ricode.ml.training_types import (
     ModelInitProtocol,
     ModelUpdateProtocol,
@@ -58,40 +56,6 @@ def setup_model(
                 return model_class.from_pretrained(
                     config=config, pretrained_model_name_or_path=checkpoint_path
                 )
-
-    return _model_init
-
-
-def setup_model_complete(
-    model_class: type[TModel],
-    *,
-    job_config: JobConfig,
-    for_fully_sharded_dp: bool = False,
-) -> ModelInitProtocol[TConfig, TModel]:
-    def _model_init(
-        config: TConfig, checkpoint_path: str | pathlib.Path | None = None
-    ) -> TModel:
-        init_context = contextlib.nullcontext()
-        if for_fully_sharded_dp and is_distributed() and not is_rank_zero():
-            init_context = torch.device("meta")
-
-        with init_context:
-            if checkpoint_path is None:
-                # initialize the model by a config object
-                model = model_class(config)
-            else:
-                # initialize the model from a checkpoint at `checkpoint_path`
-                model = model_class.from_pretrained(
-                    config=config, pretrained_model_name_or_path=checkpoint_path
-                )
-
-        if job_config.activation_checkpoint.mode != "none":
-            _setup_ac(
-                model,
-                job_config.activation_checkpoint,
-            )
-
-        return model
 
     return _model_init
 
