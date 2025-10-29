@@ -787,6 +787,13 @@ def do_train(
     if device is None:
         device = "cpu" if not torch.cuda.is_available() else "cuda:0"
 
+    if device is not None and device.startswith("cuda:"):
+        from pynvml import nvmlGetDeviceHandleByIndex
+
+        device_handle = nvmlGetDeviceHandleByIndex(int(device[len("cuda:") :]))
+    else:
+        device_handle = None
+
     if hooks is None:
         hooks = Hooks()
 
@@ -949,7 +956,7 @@ def do_train(
             postfix.update(epoch=args.epoch)
             args.epoch += 1
 
-            stats = torch.zeros(4, device=device)
+            stats = torch.zeros(6, device=device)
             stop_after_epoch = False
             for cpu_batch in dataloader:
                 batch_size = first(cpu_batch.values()).size(0)
@@ -1006,6 +1013,23 @@ def do_train(
                     # (8) update gradient norm statistics
                     stats[2] += norm
                     args.grad_steps = 0
+
+                    # (9) update power usage calculation
+                    if device_handle is not None:
+                        from pynvml import (
+                            nvmlDeviceGetMemoryInfo,
+                            nvmlDeviceGetPowerUsage,
+                            nvmlDeviceGetUtilizationRates,
+                        )
+
+                        milli_watt_usage = nvmlDeviceGetPowerUsage(device_handle)
+                        memory = nvmlDeviceGetMemoryInfo(device_handle)
+                        utilization = nvmlDeviceGetUtilizationRates(device_handle)
+
+                        stats[3] += milli_watt_usage
+                        stats[4] += memory.used
+                        stats[5] += utilization.gpu
+                        stats[6] += utilization.memory
 
                 # (9) update total tokens statistics
                 if "attention_mask" in batch:
