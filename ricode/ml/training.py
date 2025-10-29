@@ -1068,7 +1068,7 @@ def do_train(
                     stats.zero_()
 
                     accumulated_loss, num_batches_or_steps, g_norm, global_tokens = (
-                        local_stats.tolist()
+                        local_stats[:4].tolist()
                     )
                     global_loss = accumulated_loss / max(1, num_batches_or_steps)
                     global_norm = g_norm / (
