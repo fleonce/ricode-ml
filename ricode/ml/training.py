@@ -978,7 +978,7 @@ def do_train(
             postfix.update(epoch=args.epoch)
             args.epoch += 1
 
-            stats = torch.zeros(6, device=device)
+            stats = torch.zeros(7, device=device)
             stop_after_epoch = False
             for cpu_batch in dataloader:
                 batch_size = first(cpu_batch.values()).size(0)
