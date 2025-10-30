@@ -74,7 +74,6 @@ def _setup_ac(
                 _setup_selective_ac(submodule, config)
             else:
                 raise ValueError(config.mode)
-            print(f"Applied activation checkpointing to {name}")
     return None
 
 

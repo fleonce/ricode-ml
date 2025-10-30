@@ -1,3 +1,4 @@
+import math
 from typing import Callable
 
 import torch.nn
@@ -42,3 +43,38 @@ def _reduce_parameters(
     module: torch.nn.Module, reduction: Callable[[torch.nn.Parameter], int]
 ):
     return sum(map(reduction, module.parameters()))
+
+
+def _format_to_memory_units(inp: int):
+    return _format_to_powers_of_1000(inp, [None, "KiB", "MiB", "GiB", "TiB"])
+
+
+def format_to_energy_usage(inp: float):
+    return _format_to_powers_of_1000(inp, ["mWh", "Wh", "kWh", "MWh"])
+
+
+def _format_to_powers_of_1000(inp: float | int, units=None):
+    if units is None:
+        units = [
+            None,
+            "K",  # 10**3
+            "M",  # 10 ** 6
+            "B",  # 10 ** 9
+            "T",  # 10 ** 12
+            "q",  # 10 ** 15
+            "Q",  # 10 ** 18
+        ]
+
+    if inp <= 1000:
+        if units[0] is None:
+            return str(inp).rjust(7)
+        return f"{inp:.0f} {units[0]}".rjust(7)
+
+    scale = math.floor(math.log(inp, 1000))
+    unit = units[scale]
+    number = inp / (1000**scale)
+    return f"{number:.1f} {unit}".rjust(7)
+
+
+def _format_to_percentage(inp: int):
+    return f"{inp}%".rjust(4)

@@ -39,7 +39,7 @@ import torch.distributed.checkpoint.state_dict
 import torch.version
 from more_itertools import first
 from torch import Generator, NoneType
-from torch.distributed.checkpoint.state_dict import get_state_dict
+from torch.distributed.checkpoint.state_dict import get_state_dict, StateDictOptions
 from torch.nn import Module
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
@@ -49,13 +49,18 @@ from transformers import PreTrainedModel
 
 from ricode.ml import training_operators
 from ricode.ml._training.utils import (
+    _format_to_memory_units,
+    _format_to_percentage,
+    _format_to_powers_of_1000,
     estimated_model_size,
+    format_to_energy_usage,
     num_gradient_parameters,
     num_local_parameters,
     num_parameters,
 )
+from ricode.ml._training.watcher import Watcher
 from ricode.ml.dataloaders import Batch, ProfilingDataLoaderIterator
-from ricode.ml.distributed import distributed_barrier
+from ricode.ml.distributed import distributed_barrier, distributed_world_size
 from ricode.ml.distributed.fully_sharded import _is_fully_sharded_model
 from ricode.ml.distributed.utils import (
     distributed_setup,
@@ -139,7 +144,11 @@ def save_checkpoint(
         model_dir = Path(model_path)
         save_pretrained_kwargs = {}
 
-        model_state_dict, optimizer_state_dict = get_state_dict(model, optimizer)
+        do_cpu_offload = distributed_world_size() > 1
+        options = StateDictOptions(full_state_dict=True, cpu_offload=do_cpu_offload)
+        model_state_dict, optimizer_state_dict = get_state_dict(
+            model, optimizer, options=options
+        )
         if args.rank == 0:
             save_pretrained_kwargs["state_dict"] = model_state_dict
             save_pretrained_kwargs["is_main_process"] = True
@@ -652,6 +661,7 @@ def do_evaluate(
     dataloader_fn: DataLoaderProtocol[TDataset, THparams],
     score_comparison: Callable[[float, float], bool] = operator.gt,
 ):
+    args.inside_eval = True
     logger = logging.getLogger("do_evaluate")
 
     gc.collect()
@@ -722,6 +732,7 @@ def do_evaluate(
     if new_best_score:
         args.best_score = args.train_steps, outcome_score
 
+    args.inside_eval = False
     if (
         args.hparams.patience
         and args.best_score
@@ -791,11 +802,13 @@ def do_train(
         device = "cpu" if not torch.cuda.is_available() else "cuda:0"
 
     if device is not None and device.startswith("cuda:"):
-        from pynvml import nvmlDeviceGetHandleByIndex
+        from pynvml import nvmlDeviceGetHandleByIndex, nvmlDeviceGetName
 
         device_handle = nvmlDeviceGetHandleByIndex(int(device[len("cuda:") :]))
+        device_name = nvmlDeviceGetName(device_handle)
     else:
         device_handle = None
+        device_name = "cpu"
 
     if use_fsdp is not None:
         warnings.warn(
@@ -943,9 +956,26 @@ def do_train(
             reproducibility_variables,
         )
 
+    watcher = Watcher(args)
+
     postfix: MutableMapping[str, Any] = collections.OrderedDict(
-        epoch=args.epoch, score=0.0, loss=0.0, g_norm=0.0, tokens=0
+        epoch=args.epoch, loss=0.0, g_norm=0.0
     )
+    stats_postfix = collections.OrderedDict(
+        score=0.0,
+        energy=0.0,
+        power=0.0,
+        memory=0,
+        gpu_util=0,
+        memory_util=0,
+        tokens=0,
+        # pcie_rx=0.0,
+        # pcie_tx=0.0,
+    )
+    if world_size > 1:
+        stats_fmt = f"{{bar}} device: {world_size}x{device_name}{{postfix}}"
+    else:
+        stats_fmt = f"{{bar}} device: {device_name}{{postfix}}"
 
     if args.best_score is not None:
         postfix["score"] = float(args.best_score[1])
@@ -959,9 +989,16 @@ def do_train(
             initial=args.start_step,
             leave=True,
             disable=not use_tqdm,
-            position=0,
+            position=1,
             mininterval=0.1,
         ) as progress_bar,
+        tqdm(
+            position=0,
+            leave=True,
+            disable=not use_tqdm,
+            bar_format=stats_fmt,
+            postfix=stats_postfix,
+        ) as stats_bar,
         setup_profiler_context(do_profile=do_profile, rank=rank) as prof,
     ):
         while args.train_steps < steps_to_train:
@@ -978,7 +1015,7 @@ def do_train(
             postfix.update(epoch=args.epoch)
             args.epoch += 1
 
-            stats = torch.zeros(7, device=device)
+            stats = torch.zeros(10, device=device)
             stop_after_epoch = False
             for cpu_batch in dataloader:
                 batch_size = first(cpu_batch.values()).size(0)
@@ -1036,24 +1073,17 @@ def do_train(
                     stats[2] += norm
                     args.grad_steps = 0
 
-                    # (9) update power usage calculation
-                    if device_handle is not None:
-                        from pynvml import (
-                            nvmlDeviceGetMemoryInfo,
-                            nvmlDeviceGetPowerUsage,
-                            nvmlDeviceGetUtilizationRates,
-                        )
+                # (9a) update power usage calculation
+                info = watcher.poll_latest()
+                if info is not None:
+                    stats[4] += info.power
+                    stats[5] += info.memory
+                    stats[6] += info.gpu_util
+                    stats[7] += info.memory_util
+                    stats[8] += info.train_energy
+                    stats[9] += info.validation_energy
 
-                        milli_watt_usage = nvmlDeviceGetPowerUsage(device_handle)
-                        memory = nvmlDeviceGetMemoryInfo(device_handle)
-                        utilization = nvmlDeviceGetUtilizationRates(device_handle)
-
-                        stats[3] += milli_watt_usage
-                        stats[4] += memory.used
-                        stats[5] += utilization.gpu
-                        stats[6] += utilization.memory
-
-                # (9) update total tokens statistics
+                # (9b) update total tokens statistics
                 if "attention_mask" in batch:
                     num_tokens = batch["attention_mask"].sum()
                     stats[3] += num_tokens
@@ -1074,6 +1104,12 @@ def do_train(
                     global_norm = g_norm / (
                         max(1, num_batches_or_steps // hparams.gradient_accumulation)
                     )
+                    args.tokens += global_tokens
+
+                    milli_watts, memory_used, gpu_util, memory_util = local_stats[
+                        4:8
+                    ].tolist()
+                    train_energy, validation_energy = local_stats[8:10].tolist()
 
                     args.score_history["_loss"].append((args.train_steps, global_loss))
                     args.score_history["_norm"].append((args.train_steps, global_norm))
@@ -1081,7 +1117,19 @@ def do_train(
                     postfix.update(
                         loss=global_loss,
                         g_norm=global_norm,
-                        tokens=postfix["tokens"] + global_tokens,
+                    )
+
+                    stats_postfix.update(
+                        energy=format_to_energy_usage(train_energy + validation_energy),
+                        power=_format_to_powers_of_1000(
+                            milli_watts, ["mW", "W", "kW", "MW"]
+                        ),
+                        memory=_format_to_memory_units(memory_used),
+                        gpu_util=_format_to_percentage(gpu_util),
+                        memory_util=_format_to_percentage(memory_util),
+                        tokens=_format_to_powers_of_1000(args.tokens),
+                        # pcie_rx=_format_to_memory_units(rx_bytes),
+                        # pcie_tx=_format_to_memory_units(tx_bytes),
                     )
 
                     if isinstance(loss_info, Mapping):
@@ -1091,7 +1139,9 @@ def do_train(
                         postfix.update(dl=dataloader.step_time)
 
                 progress_bar.set_postfix(postfix, refresh=False)
+                stats_bar.set_postfix(stats_postfix, refresh=False)
                 progress_bar.update(1)
+                stats_bar.update(1)
 
                 del batch
                 del loss_tensor
@@ -1136,7 +1186,7 @@ def do_train(
                         )
 
                         if new_best_score:
-                            postfix.update(score=float(new_score))
+                            stats_postfix.update(score=float(new_score))
 
                             if dont_ckpt:
                                 logger.info(
@@ -1163,6 +1213,16 @@ def do_train(
                     break
             if stop_after_epoch:
                 break
+
+    args.done = True
+    energy_info = watcher.wait_until_finish()
+    total_energy = energy_info.train_energy + energy_info.validation_energy
+
+    logger.info(
+        f"Used {format_to_energy_usage(total_energy)} of energy ("
+        f"{format_to_energy_usage(energy_info.train_energy)} kWh for train, "
+        f"{format_to_energy_usage(energy_info.train_energy)} kWh for validation)"
+    )
 
     if job_config.parallelize.dp_mode != "none":
         logger.info("Waiting at save barrier")
@@ -1301,10 +1361,15 @@ def save_loss_plot(
     )
 
     score_history = {
-        key: torch.tensor(value).cpu()
+        key: (
+            torch.tensor(value).cpu()
+            if not isinstance(first(value), torch.Tensor)
+            else torch.stack(value, dim=-1).cpu()
+        )
         for key, value in args.score_history.items()
-        if key in (args.scores_to_track | {"_steps"})
+        # if key in (args.scores_to_track | {"_steps"})
     }
+    scores_to_track = args.scores_to_track | {"_steps"}
 
     _save_loss_plot(
         title,
@@ -1313,6 +1378,7 @@ def save_loss_plot(
         grad_steps,
         grad_norm_history,
         score_history,
+        scores_to_track,
         args.hparams.optimize_for,
         output_file,
         **kwargs,
@@ -1326,6 +1392,7 @@ def _save_loss_plot(
     grad_steps: torch.Tensor,
     grad_norm_history: torch.Tensor,
     score_history: MutableMapping[str, torch.Tensor],
+    scores_to_track: set[str],
     optimize_for: str,
     output_file: Path,
     **kwargs,
@@ -1348,6 +1415,8 @@ def _save_loss_plot(
     if MATPLOTLIB:
         logger = logging.getLogger("matplotlib")
 
+        if "_steps" not in score_history:
+            return
         score_steps = score_history.pop("_steps")
 
         from matplotlib.axes import Axes
@@ -1381,6 +1450,8 @@ def _save_loss_plot(
         if optimize_for in score_names:
             score_names[optimize_for] = score_names[optimize_for] + " (*)"
 
+        plot_scores = scores_to_track - {"_steps"}
+
         plots = kwargs.get(
             "plots",
             [
@@ -1392,13 +1463,11 @@ def _save_loss_plot(
                     "left_labels": ["Loss (smoothed)"],
                     "left_fmts": [None],
                     "left_margin": None,
-                    "right": list(sorted(score_history.keys())),
+                    "right": list(sorted(plot_scores)),
                     "right_label": "Metrics",
                     "right_bounds": (-0.05, 1.05),
                     "right_scale": "linear",
-                    "right_labels": [
-                        score_names[k] for k in sorted(score_history.keys())
-                    ],
+                    "right_labels": [score_names[k] for k in sorted(plot_scores)],
                     "right_fmts": ["*--"] * len(score_history),
                     "right_margin": None,
                     "ncol": (
@@ -1406,7 +1475,30 @@ def _save_loss_plot(
                         if len(score_history) % 2 == 0
                         else (1 if len(score_history) <= 1 else 3)
                     ),
-                }
+                },
+                {
+                    "left": ["_power"],
+                    "left_label": "Power Draw",
+                    "left_bounds": (None, None),
+                    "left_scale": "linear",
+                    "left_labels": ["Power Draw (Watts)"],
+                    "left_fmts": [None],
+                    "left_margin": None,
+                    "left_scales": [1e-3],
+                    "left_colors": ["red"],
+                    "right": ["_gpu_util", "_memory_util"],
+                    "right_label": "Metrics",
+                    "right_bounds": (None, None),
+                    "right_scale": "linear",
+                    "right_labels": ["GPU Util (%)", "VRAM Util (%)"],
+                    "right_fmts": [".--", ".--"],
+                    "right_margin": None,
+                    "ncol": (
+                        2
+                        if len(score_history) % 2 == 0
+                        else (1 if len(score_history) <= 1 else 3)
+                    ),
+                },
             ],
         )
 
@@ -1421,18 +1513,20 @@ def _save_loss_plot(
         smoothed_gradient_norm_history = smooth_curve(grad_norm_history, 0.9)
 
         plottable_series = {
-            key: (torch.stack((score_steps, value)) if value.dim() == 1 else value)
+            key: (
+                torch.stack((score_steps, value), dim=-1) if value.dim() == 1 else value
+            )
             for key, value in score_history.items()
         }
         plottable_series["_loss"] = torch.stack(
-            (loss_steps, smoothed_train_loss_history)
+            (loss_steps, smoothed_train_loss_history), dim=-1
         )
-        plottable_series["_loss_raw"] = torch.stack((loss_steps, loss_history))
+        plottable_series["_loss_raw"] = torch.stack((loss_steps, loss_history), dim=-1)
         plottable_series["_grad_norm"] = torch.stack(
-            (grad_steps, smoothed_gradient_norm_history)
+            (grad_steps, smoothed_gradient_norm_history), dim=-1
         )
         plottable_series["_grad_norm_raw"] = torch.stack(
-            (grad_steps, grad_norm_history)
+            (grad_steps, grad_norm_history), dim=-1
         )
 
         color_presets = kwargs.get(
@@ -1476,14 +1570,23 @@ def _save_loss_plot(
         num_visible_evaluations = max(1, math.floor(num_evaluations / 10))
 
         def _process_metric(
-            a: Axes, m: str, l: str, f: Optional[str], c: Optional[Any]
+            a: Axes,
+            m: str,
+            l: str,
+            f: Optional[str],
+            c: Optional[Any],
+            s: Optional[float],
         ):
             nonlocal cmap_index
 
-            x, y = plottable_series[m].unbind(dim=0)
+            x, y = plottable_series[m].unbind(dim=1)
+            x = x.to(torch.long)
             if m not in color_presets:
                 x = x.numpy()[::-num_visible_evaluations]
                 y = y.numpy()[::-num_visible_evaluations]
+            if s is not None:
+                y = y * s
+
             if len(x) < 1:
                 return
             args: tuple[Any, ...] = x, y
@@ -1493,12 +1596,17 @@ def _save_loss_plot(
                     c = colors[cmap_index]
                     cmap_index += 1
 
-                metric_kwargs = dict(
-                    marker_style,
-                    markerfacecolor=c,
-                    markeredgecolor="black",
-                    color="black",
-                )
+                if f is not None:
+                    metric_kwargs = dict(
+                        marker_style,
+                        markerfacecolor=c,
+                        markeredgecolor="black",
+                        color="black",
+                    )
+                else:
+                    metric_kwargs = dict(
+                        color=c,
+                    )
 
                 if f is not None:
                     args = args + (f,)
@@ -1527,11 +1635,16 @@ def _save_loss_plot(
                 ax.yaxis.set_minor_formatter(plot.get("yaxis_formatter"))
 
             left_colors = plot.get("left_colors", [None] * len(plot["left"]))
+            left_scales = plot.get("left_scales", [None] * len(plot["left"]))
 
-            for metric, label, fmt, color in zip(
-                plot["left"], plot["left_labels"], plot["left_fmts"], left_colors
+            for metric, label, fmt, color, scale in zip(
+                plot["left"],
+                plot["left_labels"],
+                plot["left_fmts"],
+                left_colors,
+                left_scales,
             ):
-                _process_metric(ax, metric, label, fmt, color)
+                _process_metric(ax, metric, label, fmt, color, scale)
 
             _apply_bounds(ax, plot["left_margin"], *plot["left_bounds"])
 
@@ -1544,14 +1657,16 @@ def _save_loss_plot(
                     twin_ax.yaxis.set_major_formatter(plot.get("twinaxis_formatter"))
 
                 right_colors = plot.get("right_colors", [None] * len(plot["right"]))
+                right_scales = plot.get("right_scales", [None] * len(plot["right"]))
 
-                for metric, label, fmt, color in zip(
+                for metric, label, fmt, color, scale in zip(
                     plot["right"],
                     plot["right_labels"],
                     plot["right_fmts"],
                     right_colors,
+                    right_scales,
                 ):
-                    _process_metric(twin_ax, metric, label, fmt, color)
+                    _process_metric(twin_ax, metric, label, fmt, color, scale)
 
                 _apply_bounds(twin_ax, plot["right_margin"], *plot["right_bounds"])
             _setup_legend(ax, twin_ax, plot["ncol"])

@@ -1,7 +1,9 @@
 import functools
 import os
+import signal
 import subprocess
 import sys
+from subprocess import Popen
 from typing import Mapping, Sequence
 
 from with_argparse import with_argparse
@@ -81,18 +83,31 @@ def _check_inside_any_screen():
     return "STY" in os.environ and len(os.environ["STY"]) > 0
 
 
-def _run_proc(args: Sequence[str], env: Mapping[str, str] | None = None):
+def _run_proc(args: Sequence[str], env: Mapping[str, str] | None = None) -> int:
     print(" ".join(args))
-    return subprocess.run(
-        args,
-        shell=False,
-        cwd=os.getcwd(),
-        capture_output=False,
-        stdin=sys.stdin,
-        stdout=sys.stdout,
-        stderr=sys.stderr,
-        env=env,
-    )
+    subproc = None
+    try:
+        subproc = Popen(
+            args,
+            shell=False,
+            cwd=os.getcwd(),
+            stdin=subprocess.DEVNULL,
+            stdout=sys.stdout,
+            stderr=sys.stderr,
+            env=env,
+        )
+        subproc.communicate(None)
+    except KeyboardInterrupt:
+        try:
+            print("Waiting for subprocess exit ...")
+            if subproc is not None and subproc.poll() is None:
+                subproc.send_signal(signal.SIGINT)
+                subproc.wait()
+        except KeyboardInterrupt:
+            print("Terminating process ... KeyboardInterrupt again to abort")
+            if subproc is not None:
+                subproc.terminate()
+    return subproc.poll()
 
 
 def _remove_first_script_arg(func):
@@ -133,8 +148,8 @@ def launch(
 
         if _help:
             command_to_run.append("-h")
-            process = _run_proc(command_to_run)
-            return process.returncode
+            ret_code = _run_proc(command_to_run)
+            return ret_code
         else:
             if screen_bin is None:
                 print("screen is unavailable, falling back to single-gpu mode")
@@ -147,7 +162,7 @@ def launch(
             if not is_distributed:
                 os.environ["RANK"] = "0"
                 os.environ["WORLD_SIZE"] = "1"
-                return _run_proc(command_to_run).returncode
+                return _run_proc(command_to_run)
             else:
                 inside_primary = _check_inside_primary_screen(
                     screen_pattern, device_ids[0] + 1
@@ -214,7 +229,7 @@ def launch(
                     os.environ["CUDA_LOCAL_DEVICE"] = str(device_ids[0])
                     os.environ["MASTER_ADDR"] = master_address
                     os.environ["MASTER_PORT"] = master_port
-                    return _run_proc(command_to_run).returncode
+                    return _run_proc(command_to_run)
                 print(f"Launched {world_size} procs with {' '.join(command_to_run)!r}")
                 return 0
     else:

@@ -200,6 +200,9 @@ class TrainingArgs(Generic[THparams, TDataset]):
     start_step: int = 0
     train_steps: int = 0
     grad_steps: int = 0
+    tokens: int = 0
+    done: bool = False
+    inside_eval: bool = False
     best_score: Optional[tuple[int, float | int]] = None
     score_history: Mapping[str, list[float | int | tuple[float | int, ...]]] = (
         dataclasses.field(default_factory=lambda: defaultdict(list))

@@ -2,8 +2,9 @@ import contextlib
 import pathlib
 
 import torch
+from torch.distributed import init_device_mesh
 
-from ricode.ml.distributed import is_distributed, is_rank_zero
+from ricode.ml.distributed import distributed_world_size, is_distributed, is_rank_zero
 from ricode.ml.model_setup.activation_checkpointing import _setup_ac
 from ricode.ml.model_setup.compile import setup_compile
 from ricode.ml.model_setup.ddp import setup_ddp
@@ -57,11 +58,14 @@ def distributed_model_setup(
     if job_config.compile.enabled:
         setup_compile(module, job_config.compile)
 
-    if job_config.parallelize.dp_mode == "fsdp":
-        setup_fsdp2(module, job_config.parallelize)
-    elif job_config.parallelize.dp_mode == "ddp":
-        setup_ddp(module, job_config.parallelize)
-    elif job_config.parallelize.dp_mode != "none":
-        raise ValueError(job_config.parallelize.dp_mode)
+    if job_config.parallelize.dp_mode != "none":
+        device_mesh = init_device_mesh("cuda", (distributed_world_size(),))
+
+        if job_config.parallelize.dp_mode == "fsdp":
+            setup_fsdp2(module, job_config.parallelize, device_mesh)
+        elif job_config.parallelize.dp_mode == "ddp":
+            setup_ddp(module, job_config.parallelize)
+        else:
+            raise ValueError(job_config.parallelize.dp_mode)
 
     return None

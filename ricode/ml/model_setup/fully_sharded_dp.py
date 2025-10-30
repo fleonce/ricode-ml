@@ -5,6 +5,7 @@ import torch
 import torch.cuda.nccl as nccl
 import torch.distributed as dist
 from more_itertools.more import first
+from torch.distributed import DeviceMesh
 from torch.distributed.fsdp import (
     fully_shard,
     FullyShardedDataParallel,
@@ -70,6 +71,7 @@ def setup_mixed_precision_policy(
 def setup_fsdp2(
     module: torch.nn.Module,
     config: ParallelizeConfig,
+    device_mesh: DeviceMesh,
 ):
     blocks = guess_model_block_types(module)
     if len(blocks) > 1 and not config.allow_multiple_blocks:
@@ -80,16 +82,18 @@ def setup_fsdp2(
     mp_policy = MixedPrecisionPolicy(
         getattr(torch, config.param_dtype),
         getattr(torch, config.reduce_dtype),
-        cast_forward_inputs=True,
     )
 
-    kwargs = {"mp_policy": mp_policy, "reshard_after_forward": True}
+    kwargs = {
+        "mp_policy": mp_policy,
+        "mesh": device_mesh,
+    }
+
     for name, submodule in module.named_modules():
         if type(submodule) in blocks:
             fully_shard(submodule, **kwargs)
 
-    for child in module.children():
-        fully_shard(child, **kwargs)
+    fully_shard(module, **kwargs)
 
 
 def setup_fully_sharded_dp_model(

@@ -46,7 +46,6 @@ def distributed_world_size() -> int:
 
 # @functools.lru_cache(1)
 def is_rank_zero() -> bool:
-    print(is_distributed(), distributed_rank(), os.environ.get("RANK", None))
     return not is_distributed() or distributed_rank() == 0
 
 
@@ -86,7 +85,7 @@ def distributed_setup():
         "nccl",
         rank=rank,
         world_size=world_size,
-        timeout=timedelta(seconds=60),
+        timeout=timedelta(seconds=30),
         device_id=torch.device("cuda", local_device),
     )
     return rank, world_size, local_device
