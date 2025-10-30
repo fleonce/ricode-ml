@@ -6,10 +6,13 @@ def setup_nvml(func):
     def wrapper(*args, **kwargs):
         from pynvml import nvmlInit, nvmlShutdown
 
+        success = False
         try:
             nvmlInit()
+            success = True
             return func(*args, **kwargs)
         finally:
-            nvmlShutdown()
+            if success:
+                nvmlShutdown()
 
     return wrapper
