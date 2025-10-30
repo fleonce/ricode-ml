@@ -68,12 +68,19 @@ def _setup_ac(
     for name, submodule in module.named_modules():
         if type(submodule) in blocks:
             # we found a module that is a transformer block
-            if config.mode == "blockwise" and False:
-                _setup_blockwise_ac(submodule, config)
-            elif config.mode == "selective" or True:
-                _setup_selective_ac(submodule, config)
+            if config.mode == "blockwise":
+                checkpointed_module = _setup_blockwise_ac(submodule, config)
+            elif config.mode == "selective":
+                checkpointed_module = _setup_selective_ac(submodule, config)
             else:
                 raise ValueError(config.mode)
+            if "." in name:
+                submodule_parent, submodule_name = name.rsplit(".", 1)
+                module.get_submodule(submodule_parent).register_module(
+                    submodule_name, checkpointed_module
+                )
+            else:
+                module.register_module(name, checkpointed_module)
     return None
 
 
@@ -105,8 +112,6 @@ def _setup_selective_ac(
     return checkpoint_wrapper(
         module,
         context_fn=partial(create_selective_checkpoint_contexts, policy_fn),
-        preserve_prng_state=False,
-        early_stop=False,
     )
 
 
@@ -114,10 +119,8 @@ def _setup_blockwise_ac(
     module: torch.nn.Module,
     config: ACConfig,
 ):
-    checkpoint_wrapper(
+    return checkpoint_wrapper(
         module,
-        preserve_prng_state=False,
-        early_stop=False,
     )
 
 

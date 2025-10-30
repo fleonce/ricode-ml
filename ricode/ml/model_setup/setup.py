@@ -49,7 +49,7 @@ def distributed_model_setup(
     *,
     job_config: JobConfig,
 ) -> None:
-    if job_config.activation_checkpoint.mode != "none" or True:
+    if job_config.activation_checkpoint.mode != "none":
         _setup_ac(
             module,
             job_config.activation_checkpoint,
