@@ -264,7 +264,7 @@ def reproducibility_logging(
         logger.info(
             f"Git commit = {get_commit_hash()} on {socket.gethostname()} (tree is dirty)"
         )
-        if os.environ.get("ITER_LOG_DIFF", "1") == "1":
+        if os.environ.get("LOG_DIFF", "1") == "1":
             logger.warning(get_working_tree_diff())
     logger.info(f"Seed = {seed}")
     if job_config.parallelize.dp_mode != "none":
