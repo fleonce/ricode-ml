@@ -46,7 +46,7 @@ def distributed_world_size() -> int:
 
 # @functools.lru_cache(1)
 def is_rank_zero() -> bool:
-    return not is_distributed() or distributed_rank() == 0
+    return distributed_rank() == 0 or not is_distributed()
 
 
 def distributed_barrier():
