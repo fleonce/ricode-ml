@@ -154,6 +154,7 @@ class TypesInfo:
     relation_types: list[str] | None
     symmetric_relation_types: set[str] | None
     type: Literal["ner", "relation_extraction", "entity_linking"]
+    nest_depth: int
 
     @property
     def num_entity_types(self):
@@ -246,5 +247,6 @@ class TypesMixin:
                     else "relation_extraction"
                 ),
             ),
+            nest_depth=types_info.get("nest_depth", 1),
         )
         return info
