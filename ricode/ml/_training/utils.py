@@ -46,14 +46,14 @@ def _reduce_parameters(
 
 
 def _format_to_memory_units(inp: int):
-    return _format_to_powers_of_1000(inp, [None, "KiB", "MiB", "GiB", "TiB"])
+    return _format_to_powers_of_1000(inp, [None, "KiB", "MiB", "GiB", "TiB"], 1000)
 
 
 def format_to_energy_usage(inp: float):
     return _format_to_powers_of_1000(inp, ["mWh", "Wh", "kWh", "MWh"])
 
 
-def _format_to_powers_of_1000(inp: float | int, units=None):
+def _format_to_powers_of_1000(inp: float | int, units=None, base=1000):
     if units is None:
         units = [
             None,
@@ -65,14 +65,14 @@ def _format_to_powers_of_1000(inp: float | int, units=None):
             "Q",  # 10 ** 18
         ]
 
-    if inp <= 1000:
+    if inp <= base:
         if units[0] is None:
             return str(inp).rjust(7)
         return f"{inp:.0f} {units[0]}".rjust(7)
 
-    scale = math.floor(math.log(inp, 1000))
+    scale = math.floor(math.log(inp, base))
     unit = units[scale]
-    number = inp / (1000**scale)
+    number = inp / (base**scale)
     return f"{number:.1f} {unit}".rjust(7)
 
 

@@ -24,6 +24,9 @@ def is_distributed() -> bool:
     if dist.is_initialized():
         return True
 
+    if distributed_world_size() == 1 or "RANK" not in os.environ:
+        return False
+
     if "RANK" in os.environ:
         distributed_setup()
         return dist.is_initialized()
@@ -44,12 +47,21 @@ def distributed_world_size() -> int:
     return 1
 
 
-# @functools.lru_cache(1)
 def is_rank_zero() -> bool:
-    return distributed_rank() == 0 or not is_distributed()
+    if distributed_world_size() == 1 or not is_distributed():
+        # distributed training is disabled, is_rank_zero is always True
+        return True
+
+    return distributed_rank() == 0
 
 
 def distributed_barrier():
+    if not is_distributed():
+        return
+
+    if not dist.is_initialized():
+        distributed_setup()
+
     if dist.is_initialized():
         dist.barrier()
 

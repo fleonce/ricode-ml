@@ -946,7 +946,11 @@ def do_train(
             args.best_score = _best_score
         logger.info(f"Continuing training from step {args.train_steps}")
 
-    if not memory_checkpoints:
+    do_reproducibility_checkpoint = not memory_checkpoints and bool(
+        int(os.environ.get("REPRODUCIBLE_CHECKPOINT", "1"))
+    )
+
+    if do_reproducibility_checkpoint:
         write_reproducibility_checkpoint(
             model_path,
             args,
@@ -1109,6 +1113,9 @@ def do_train(
                     milli_watts, memory_used, gpu_util, memory_util = local_stats[
                         4:8
                     ].tolist()
+                    gpu_util /= distributed_world_size()
+                    memory_util /= distributed_world_size()
+
                     train_energy, validation_energy = local_stats[8:10].tolist()
 
                     args.score_history["_loss"].append((args.train_steps, global_loss))
