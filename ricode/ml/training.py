@@ -1227,8 +1227,8 @@ def do_train(
 
     logger.info(
         f"Used {format_to_energy_usage(total_energy)} of energy ("
-        f"{format_to_energy_usage(energy_info.train_energy)} kWh for train, "
-        f"{format_to_energy_usage(energy_info.train_energy)} kWh for validation)"
+        f"{format_to_energy_usage(energy_info.train_energy).strip()} for train, "
+        f"{format_to_energy_usage(energy_info.train_energy).strip()} for validation)"
     )
 
     if job_config.parallelize.dp_mode != "none":
