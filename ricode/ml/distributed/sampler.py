@@ -75,7 +75,9 @@ class DistributedWeightedSampler(Sampler[int]):
         self.total_size = self.num_samples * self.num_replicas
         self.seed = seed
         self.shuffle = shuffle
-        assert weights_tensor.numel() == self.total_size
+        if self.weights.numel() < self.total_size:
+            self.weights = self.weights[: self.total_size]
+        assert self.weights.numel() == self.total_size
 
     def __iter__(self) -> Iterator[int]:
         g = torch.Generator()
