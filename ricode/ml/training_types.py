@@ -5,6 +5,7 @@ from collections import defaultdict
 from contextlib import AbstractContextManager
 from dataclasses import Field, fields as dataclass_fields, is_dataclass
 from typing import (
+    Any,
     Callable,
     ClassVar,
     Dict,
@@ -208,6 +209,7 @@ class TrainingArgs(Generic[THparams, TDataset]):
         dataclasses.field(default_factory=lambda: defaultdict(list))
     )
     scores_to_track: set[str] = dataclasses.field(default_factory=set)
+    watcher: Optional[Any] = None
 
     @property
     def use_fsdp(self):

@@ -1,11 +1,19 @@
 import queue
+from collections import OrderedDict
 from queue import SimpleQueue
 from threading import Thread
 from time import sleep, time
 from typing import Optional
 
 import attrs
+from tqdm.std import tqdm
 
+from ricode.ml._training.utils import (
+    _format_to_memory_units,
+    _format_to_percentage,
+    _format_to_powers_of_1000,
+    format_to_energy_usage,
+)
 from ricode.ml.training_types import TDataset, THparams, TrainingArgs
 from ricode.nvidia.nvml import setup_nvml
 
@@ -16,9 +24,9 @@ class EnergyStatistics:
     validation_energy: float
 
     power: float
-    memory: float
-    gpu_util: float
-    memory_util: float
+    memory: int
+    gpu_util: int
+    memory_util: int
 
 
 @setup_nvml
@@ -218,3 +226,28 @@ class Watcher:
         while (_ := self.queue.get()) is not None:
             continue
         return self.queue.get()
+
+
+class watcher_tqdm(tqdm):  # noqa
+    def __init__(self, *args, source: Watcher, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.source = source
+
+    def update(self, n=1):
+        info = self.source.poll_latest()
+        if info is not None:
+            self.set_postfix(
+                OrderedDict(
+                    energy=format_to_energy_usage(
+                        info.train_energy + info.validation_energy
+                    ),
+                    power=_format_to_powers_of_1000(
+                        info.power, ["mW", "W", "kW", "MW"]
+                    ),
+                    memory=_format_to_memory_units(info.memory),
+                    gpu_util=_format_to_percentage(info.gpu_util),
+                    memory_util=_format_to_percentage(info.memory_util),
+                ),
+                refresh=False,
+            )
+        super().update(n)

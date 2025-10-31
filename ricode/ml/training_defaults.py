@@ -7,8 +7,8 @@ from torch.optim import AdamW
 from torch.optim.lr_scheduler import LambdaLR
 from torcheval.metrics import Mean
 from torcheval.metrics.toolkit import sync_and_compute
-from tqdm import tqdm
 
+from ricode.ml._training.watcher import watcher_tqdm
 from ricode.ml.distributed import distributed_world_size
 from ricode.ml.training_basics import BasicMetrics, MetricsDict
 from ricode.ml.training_datasets import BasicDataset, ProxyTrainingArgs
@@ -292,11 +292,12 @@ def default_evaluate_function(
     device = model.device
 
     avg_loss = Mean(device=device)
-    for batch in tqdm(
+    for batch in watcher_tqdm(
         dataloader_fn(args, split, False),
         leave=False,
         position=0,
         desc="Evaluating loss",
+        source=args.watcher,
     ):
         loss = model(**batch.to(device))[0]
 

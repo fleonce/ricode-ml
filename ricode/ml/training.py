@@ -960,7 +960,7 @@ def do_train(
             reproducibility_variables,
         )
 
-    watcher = Watcher(args)
+    watcher = args.watcher = Watcher(args)
 
     postfix: MutableMapping[str, Any] = collections.OrderedDict(
         epoch=args.epoch, loss=0.0, g_norm=0.0
