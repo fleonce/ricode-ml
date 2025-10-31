@@ -159,79 +159,82 @@ def launch(
             world_size = len(device_ids)
             is_distributed = len(device_ids) > 1
 
-            if not is_distributed:
+            inside_primary = _check_inside_primary_screen(
+                screen_pattern, device_ids[0] + 1
+            )
+            if not inside_primary and _check_inside_any_screen():
+                print(
+                    "Must not be inside a screen besides the primary one to launch a training job"
+                )
+                return 1
+
+            existing_screens = _check_screens_exist(
+                screen_bin, screen_pattern, device_ids
+            )
+            rank_zero_dispatch = inside_primary
+
+            from pynvml import nvmlDeviceGetCount
+
+            max_gpus = nvmlDeviceGetCount()
+
+            if len(device_ids) > max_gpus and False:
+                print(
+                    f"Using more gpus ({len(device_ids)}) than available "
+                    f"on this system ({max_gpus})"
+                )
+                return 1
+
+            for rank, device_id in enumerate(device_ids):
+                if rank == 0 and rank_zero_dispatch:
+                    continue
+
+                device_screen_name = _screen_name(screen_pattern, device_id + 1)
+
+                dispatch = functools.partial(
+                    _dispatch_command,
+                    screen_bin,
+                    device_screen_name,
+                )
+
+                if device_screen_name not in existing_screens:
+                    print(f"{screen_bin} -dmS {device_screen_name} bash")
+                    process: subprocess.CompletedProcess = subprocess.run(
+                        [screen_bin, "-dmS", device_screen_name, "bash"]
+                    )
+                    assert (
+                        process.returncode == 0
+                    ), f"Could not create screen for {device_screen_name}"
+
+                dispatch("export TMOUT=0")
+                if is_distributed:
+                    dispatch(
+                        f"export"
+                        f" WORLD_SIZE={world_size}"
+                        f" RANK={rank}"
+                        f" CUDA_LOCAL_DEVICE={device_id}"
+                        f" MASTER_ADDR={master_address}"
+                        f" MASTER_PORT={master_port}"
+                    )
+                else:
+                    dispatch(
+                        f"export"
+                        f" WORLD_SIZE=1"
+                        f" RANK=0"
+                        f" CUDA_LOCAL_DEVICE={device_id}"
+                        f" CUDA_VISIBLE_DEVICES={device_id}"
+                    )
+                dispatch("cd " + repr(os.getcwd()))
+                dispatch(" ".join(map(repr, command_to_run)))
+
+            if rank_zero_dispatch:
                 os.environ["RANK"] = "0"
-                os.environ["WORLD_SIZE"] = "1"
+                os.environ["WORLD_SIZE"] = str(world_size)
+                os.environ["CUDA_LOCAL_DEVICE"] = str(device_ids[0])
+                os.environ["MASTER_ADDR"] = master_address
+                os.environ["MASTER_PORT"] = master_port
                 return _run_proc(command_to_run)
-            else:
-                inside_primary = _check_inside_primary_screen(
-                    screen_pattern, device_ids[0] + 1
-                )
-                if not inside_primary and _check_inside_any_screen():
-                    print(
-                        "Must not be inside a screen besides the primary one to launch a training job"
-                    )
-                    return 1
-
-                existing_screens = _check_screens_exist(
-                    screen_bin, screen_pattern, device_ids
-                )
-                rank_zero_dispatch = inside_primary
-
-                from pynvml import nvmlDeviceGetCount
-
-                max_gpus = nvmlDeviceGetCount()
-
-                if len(device_ids) > max_gpus and False:
-                    print(
-                        f"Using more gpus ({len(device_ids)}) than available "
-                        f"on this system ({max_gpus})"
-                    )
-                    return 1
-
-                for rank, device_id in enumerate(device_ids):
-                    if rank == 0 and rank_zero_dispatch:
-                        continue
-
-                    device_screen_name = _screen_name(screen_pattern, device_id + 1)
-
-                    dispatch = functools.partial(
-                        _dispatch_command,
-                        screen_bin,
-                        device_screen_name,
-                    )
-
-                    if device_screen_name not in existing_screens:
-                        print(f"{screen_bin} -dmS {device_screen_name} bash")
-                        process: subprocess.CompletedProcess = subprocess.run(
-                            [screen_bin, "-dmS", device_screen_name, "bash"]
-                        )
-                        assert (
-                            process.returncode == 0
-                        ), f"Could not create screen for {device_screen_name}"
-
-                    dispatch("export TMOUT=0")
-                    if is_distributed:
-                        dispatch(
-                            f"export WORLD_SIZE={world_size} RANK={rank} CUDA_LOCAL_DEVICE={device_id}"
-                        )
-                        dispatch(
-                            f"export MASTER_ADDR={master_address} MASTER_PORT={master_port}"
-                        )
-                    else:
-                        dispatch(f"export CUDA_VISIBLE_DEVICES={device_id}")
-                    dispatch("cd " + repr(os.getcwd()))
-                    dispatch(" ".join(map(repr, command_to_run)))
-
-                if rank_zero_dispatch:
-                    os.environ["RANK"] = "0"
-                    os.environ["WORLD_SIZE"] = str(world_size)
-                    os.environ["CUDA_LOCAL_DEVICE"] = str(device_ids[0])
-                    os.environ["MASTER_ADDR"] = master_address
-                    os.environ["MASTER_PORT"] = master_port
-                    return _run_proc(command_to_run)
-                print(f"Launched {world_size} procs with {' '.join(command_to_run)!r}")
-                return 0
+            print(f"Launched {world_size} procs with {' '.join(command_to_run)!r}")
+            return 0
     else:
         print("Cannot find", train_path, "aborting ...", file=sys.stderr)
         return 1
