@@ -95,7 +95,7 @@ from ricode.ml.training_utils import (
     is_clean_working_tree,
     move_to_device,
 )
-from ricode.nvidia.nvml import setup_nvml
+from ricode.nvidia.nvml import _nvml_available, setup_nvml
 
 try:
     import matplotlib.pyplot as plt
@@ -801,7 +801,7 @@ def do_train(
     if device is None:
         device = "cpu" if not torch.cuda.is_available() else "cuda:0"
 
-    if device is not None and device.startswith("cuda:"):
+    if _nvml_available() and device is not None and device.startswith("cuda:"):
         from pynvml import nvmlDeviceGetHandleByIndex, nvmlDeviceGetName
 
         device_handle = nvmlDeviceGetHandleByIndex(int(device[len("cuda:") :]))
@@ -960,7 +960,10 @@ def do_train(
             reproducibility_variables,
         )
 
-    watcher = args.watcher = Watcher(args)
+    if device_handle is not None:
+        watcher = args.watcher = Watcher(args)
+    else:
+        watcher = args.watcher = None
 
     postfix: MutableMapping[str, Any] = collections.OrderedDict(
         epoch=args.epoch, loss=0.0, g_norm=0.0
@@ -1078,8 +1081,7 @@ def do_train(
                     args.grad_steps = 0
 
                 # (9a) update power usage calculation
-                info = watcher.poll_latest()
-                if info is not None:
+                if watcher is not None and (info := watcher.poll_latest()) is not None:
                     stats[4] += info.power
                     stats[5] += info.memory
                     stats[6] += info.gpu_util

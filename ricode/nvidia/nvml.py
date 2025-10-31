@@ -1,10 +1,20 @@
 import functools
 
+from pynvml import NVMLError, nvmlInit, nvmlShutdown
+
+
+def _nvml_available():
+    try:
+        nvmlInit()
+        nvmlShutdown()
+        return False
+    except NVMLError:
+        return False
+
 
 def setup_nvml(func):
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
-        from pynvml import nvmlInit, nvmlShutdown
 
         success = False
         try:
@@ -14,5 +24,8 @@ def setup_nvml(func):
         finally:
             if success:
                 nvmlShutdown()
+
+    if not _nvml_available():
+        return func
 
     return wrapper
