@@ -229,13 +229,12 @@ class Watcher:
 
 
 class watcher_tqdm(tqdm):  # noqa
-    def __init__(self, *args, source: Watcher, **kwargs):
+    def __init__(self, *args, source: Optional[Watcher], **kwargs):
         super().__init__(*args, **kwargs)
         self.source = source
 
     def update(self, n=1):
-        info = self.source.poll_latest()
-        if info is not None:
+        if self.source is not None and (info := self.source.poll_latest()) is not None:
             self.set_postfix(
                 OrderedDict(
                     energy=format_to_energy_usage(
