@@ -7,7 +7,7 @@ def _nvml_available():
     try:
         nvmlInit()
         nvmlShutdown()
-        return False
+        return True
     except NVMLError:
         return False
 
