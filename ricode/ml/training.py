@@ -1409,12 +1409,14 @@ def _save_loss_plot(
     if kwargs.get("do_pickle", True):
         torch.save(
             (
+                2.0,
                 title,
                 loss_steps,
                 loss_history,
                 grad_steps,
                 grad_norm_history,
                 score_history,
+                scores_to_track,
                 optimize_for,
                 kwargs,
             ),
