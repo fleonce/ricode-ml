@@ -1463,9 +1463,10 @@ def _save_loss_plot(
 
         plot_scores = scores_to_track - {"_steps"}
 
-        plots = kwargs.get(
-            "plots",
-            [
+        plots = kwargs.get("plots", None)
+
+        if plots is None:
+            plots = [
                 {
                     "left": ["_loss"],
                     "left_label": "Loss",
@@ -1510,8 +1511,7 @@ def _save_loss_plot(
                         else (1 if len(score_history) <= 1 else 3)
                     ),
                 },
-            ],
-        )
+            ]
 
         fig, axis = plt.subplots(
             1,
