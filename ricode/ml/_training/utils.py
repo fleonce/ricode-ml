@@ -78,3 +78,7 @@ def _format_to_powers_of_1000(inp: float | int, units=None, base=1000):
 
 def _format_to_percentage(inp: int):
     return f"{inp}%".rjust(4)
+
+
+def _get_default_device():
+    return "cpu" if not torch.cuda.is_available() else "cuda:0"

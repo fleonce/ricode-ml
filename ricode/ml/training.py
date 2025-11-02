@@ -52,6 +52,7 @@ from ricode.ml._training.utils import (
     _format_to_memory_units,
     _format_to_percentage,
     _format_to_powers_of_1000,
+    _get_default_device,
     estimated_model_size,
     format_to_energy_usage,
     num_gradient_parameters,
@@ -799,7 +800,7 @@ def do_train(
     Contains the main training loop, handles evaluation, too.
     """
     if device is None:
-        device = "cpu" if not torch.cuda.is_available() else "cuda:0"
+        device = _get_default_device()
 
     if _nvml_available() and device is not None and device.startswith("cuda:"):
         from pynvml import nvmlDeviceGetHandleByIndex, nvmlDeviceGetName
