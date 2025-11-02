@@ -22,6 +22,7 @@ from typing import (
     Union,
 )
 
+import attrs
 import torch
 from more_itertools import first
 from safetensors_dataset import load_safetensors, SafetensorsDataset, SafetensorsDict
@@ -34,7 +35,7 @@ from transformers import PretrainedConfig
 
 from ricode.ml.distributed.utils import rank_zero_first
 from ricode.ml.training_basics import NameableConfig
-from ricode.ml.training_types import TDataset, THparams, TrainingArgs
+from ricode.ml.training_types import SupportsGetItem, TDataset, THparams, TrainingArgs
 from ricode.ml.training_utils import build_chunks
 
 try:
@@ -653,3 +654,17 @@ class StreamingHuggingfaceDataset(HuggingfaceDataset):
         return load.load_dataset(
             self.name, split=split_info.name_or_file, streaming=True
         )
+
+
+@attrs.define
+class CombinedDataset:
+    datasets: list[SupportsGetItem[Mapping[str, Any]]]
+
+    def __getitem__(self, item) -> MutableMapping[str, Any]:
+        result = {}
+        for dataset in self.datasets:
+            for key, value in dataset[item].items():
+                if key in result:
+                    raise ValueError
+                result[key] = value
+        return result
