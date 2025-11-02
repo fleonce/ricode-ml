@@ -39,7 +39,11 @@ import torch.distributed.checkpoint.state_dict
 import torch.version
 from more_itertools import first
 from torch import Generator, NoneType
-from torch.distributed.checkpoint.state_dict import get_state_dict, StateDictOptions
+from torch.distributed.checkpoint.state_dict import (
+    get_model_state_dict,
+    get_state_dict,
+    StateDictOptions,
+)
 from torch.nn import Module
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
@@ -67,7 +71,6 @@ from ricode.ml.distributed.utils import (
     distributed_setup,
     finalise_distributed_environment_after_exit,
 )
-from ricode.ml.model_setup.fully_sharded_dp import _is_fully_sharded_dp_model
 from ricode.ml.model_setup.job_config import JobConfig
 from ricode.ml.model_setup.setup import setup_model
 from ricode.ml.training_basics import (
@@ -94,7 +97,6 @@ from ricode.ml.training_utils import (
     get_commit_hash,
     get_working_tree_diff,
     is_clean_working_tree,
-    move_to_device,
 )
 from ricode.nvidia.nvml import _nvml_available, setup_nvml
 
@@ -140,8 +142,23 @@ def save_checkpoint(
     model_path: str,
     disable: bool = False,
     memory_checkpoints: bool = False,
+    new_best: bool = False,
 ):
     if not disable:
+        if memory_checkpoints:
+            if not new_best:
+                return
+
+            local_state_dict = get_model_state_dict(model)
+            local_state_dict = {
+                key: value.clone() for key, value in local_state_dict.items()
+            }
+            _checkpoint_state_dict["state_dict"] = local_state_dict
+
+            if args.job_config.parallelize.dp_mode != "none":
+                dist.barrier()
+            return
+
         model_dir = Path(model_path)
         save_pretrained_kwargs = {}
 
@@ -150,23 +167,10 @@ def save_checkpoint(
         model_state_dict, optimizer_state_dict = get_state_dict(
             model, optimizer, options=options
         )
+
         if args.rank == 0:
             save_pretrained_kwargs["state_dict"] = model_state_dict
             save_pretrained_kwargs["is_main_process"] = True
-
-        if memory_checkpoints:
-            if "state_dict" not in save_pretrained_kwargs:
-                save_pretrained_kwargs["state_dict"] = model.state_dict()
-            # global _checkpoint_state_dict
-
-            _checkpoint_state_dict["state_dict"] = move_to_device(
-                save_pretrained_kwargs["state_dict"], "cpu"
-            )
-            if args.job_config.parallelize.dp_mode != "none":
-                dist.barrier()
-            return
-
-        if args.rank == 0:
             model.save_pretrained(model_path, **save_pretrained_kwargs)
 
         optimizer_state = {
@@ -452,20 +456,18 @@ def load_model_checkpoint(
     memory_checkpoints: bool,
 ) -> TModel:
     if memory_checkpoints:
-        if _is_fully_sharded_dp_model(model):
-            raise NotImplementedError
+        if distributed_world_size() == 1:
+            model.load_state_dict(_checkpoint_state_dict["state_dict"])
         else:
-            # global _checkpoint_state_dict
-            state_dict = _checkpoint_state_dict["state_dict"]
-            model.load_state_dict(state_dict)
-            return model
+            torch.distributed.checkpoint.load(_checkpoint_state_dict["state_dict"])
+        return model
     else:
         del model
         torch.cuda.empty_cache()
 
         model = model_init(config, model_path)
         model = model.to(device)
-        return model  # type: ignore
+        return model
 
 
 def train_step(
@@ -1185,15 +1187,17 @@ def do_train(
                             checkpoint_path.as_posix(),
                             dont_ckpt,
                             memory_checkpoints,
+                            new_best_score,
                         )
 
-                        save_loss_plot(
-                            args,
-                            track_title,
-                            checkpoint_path / "loss.pdf",
-                            **plot_kwargs,
-                            save_plot_copy_to_parent_dir=new_checkpoint_logic,
-                        )
+                        if not memory_checkpoints:
+                            save_loss_plot(
+                                args,
+                                track_title,
+                                checkpoint_path / "loss.pdf",
+                                **plot_kwargs,
+                                save_plot_copy_to_parent_dir=new_checkpoint_logic,
+                            )
 
                         if new_best_score:
                             stats_postfix.update(score=float(new_score))
@@ -1253,9 +1257,13 @@ def do_train(
             memory_checkpoints,
         )
 
-        shutil.copytree(
-            checkpoint_path, checkpoint_path.parent, symlinks=True, dirs_exist_ok=True
-        )
+        if os.path.exists(checkpoint_path):
+            shutil.copytree(
+                checkpoint_path,
+                checkpoint_path.parent,
+                symlinks=True,
+                dirs_exist_ok=True,
+            )
 
     model_dir = Path(model_path)
     if not do_profile:
