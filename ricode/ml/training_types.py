@@ -76,6 +76,10 @@ class SupportsNext(Protocol[_T_co]):
     def __next__(self) -> _T_co: ...
 
 
+class SupportsGetItem(Protocol[_T_co]):
+    def __getitem__(self, item: int) -> _T_co: ...
+
+
 class SupportsGetItemAndLength(Protocol[_T_co]):
     def __getitem__(self, item) -> _T_co: ...
 
