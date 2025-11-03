@@ -1502,7 +1502,7 @@ def _save_loss_plot(
                     ),
                 },
                 {
-                    "left": ["_power"],
+                    "left": ["_eval_power"],
                     "left_label": "Power Draw",
                     "left_bounds": (None, None),
                     "left_scale": "linear",
@@ -1511,7 +1511,7 @@ def _save_loss_plot(
                     "left_margin": None,
                     "left_scales": [1e-3],
                     "left_colors": ["red"],
-                    "right": ["_gpu_util", "_memory_util"],
+                    "right": ["_eval_gpu_util", "_eval_memory_util"],
                     "right_label": "Metrics",
                     "right_bounds": (None, None),
                     "right_scale": "linear",
