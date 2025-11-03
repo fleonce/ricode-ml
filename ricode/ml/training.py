@@ -1443,6 +1443,30 @@ def _save_loss_plot(
             return
         score_steps = score_history.pop("_steps")
 
+        score_steps_and_zero = torch.cat(
+            (
+                torch.zeros(
+                    (1,),
+                ),
+                score_steps,
+            )
+        ).view(1, -1)
+        for key in set(score_history.keys()):
+            value = score_history[key]
+            if value.dim() == 2 and value.size(1) == 2 and not key.startswith("_eval_"):
+                key_steps, key_values = value.unbind(dim=1)
+                steps_matching_epoch = key_steps.view(-1, 1).ge(
+                    score_steps_and_zero[:, :-1]
+                ) & key_steps.view(-1, 1).lt(score_steps_and_zero[:, 1:])
+                avg_per_epoch = (
+                    (key_values.view(-1, 1) * steps_matching_epoch)
+                    .sum(dim=0)
+                    .div(steps_matching_epoch.sum(dim=0))
+                )
+                score_history[key + "_per_epoch"] = torch.stack(
+                    (score_steps, avg_per_epoch), dim=-1
+                )
+
         from matplotlib.axes import Axes
         from matplotlib.colors import ListedColormap
 
@@ -1502,24 +1526,24 @@ def _save_loss_plot(
                     ),
                 },
                 {
-                    "left": ["_eval_power"],
-                    "left_label": "Power Draw",
-                    "left_bounds": (None, None),
+                    "left": ["_eval_power", "_power_per_epoch"],
+                    "left_label": "Watts",
+                    "left_bounds": (0.1, None),
                     "left_scale": "linear",
-                    "left_labels": ["Power Draw (Watts)"],
-                    "left_fmts": [None],
+                    "left_labels": ["Training Power Draw"],
+                    "left_fmts": ["*-"],
                     "left_margin": None,
                     "left_scales": [1e-3],
-                    "left_colors": ["red"],
-                    "right": ["_eval_gpu_util", "_eval_memory_util"],
-                    "right_label": "Metrics",
-                    "right_bounds": (None, None),
+                    "left_colors": ["black"],
+                    "right": ["_gpu_util_per_epoch", "_memory_util_per_epoch"],
+                    "right_label": "Utilization (%)",
+                    "right_bounds": (-5, 105),
                     "right_scale": "linear",
-                    "right_labels": ["GPU Util (%)", "VRAM Util (%)"],
-                    "right_fmts": [".--", ".--"],
+                    "right_labels": ["Train GPU Util", "Train VRAM Util"],
+                    "right_fmts": ["o--m", ".:c"],
                     "right_margin": None,
                     "ncol": (
-                        2
+                        3
                         if len(score_history) % 2 == 0
                         else (1 if len(score_history) <= 1 else 3)
                     ),
@@ -1530,7 +1554,7 @@ def _save_loss_plot(
             1,
             len(plots),
             layout="constrained",
-            figsize=kwargs.get("figsize", (11.8, 5.2)),
+            figsize=kwargs.get("figsize", (11.8, 4.8)),
         )
 
         smoothed_train_loss_history = smooth_curve(loss_history, 0.9)
