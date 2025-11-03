@@ -1629,7 +1629,7 @@ def _save_loss_plot(
 
             x, y = plottable_series[m].unbind(dim=1)
             x = x.to(torch.long)
-            if m not in color_presets:
+            if m not in color_presets or color_presets[m].pop("fragment", False):
                 x = x.numpy()[::-num_visible_evaluations]
                 y = y.numpy()[::-num_visible_evaluations]
             if s is not None:
