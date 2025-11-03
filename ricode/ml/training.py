@@ -1554,7 +1554,7 @@ def _save_loss_plot(
             1,
             len(plots),
             layout="constrained",
-            figsize=kwargs.get("figsize", (11.8, 4.8)),
+            figsize=kwargs.get("figsize", (13.0, 5.2)),
         )
 
         smoothed_train_loss_history = smooth_curve(loss_history, 0.9)
