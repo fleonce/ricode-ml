@@ -1081,7 +1081,11 @@ def do_train(
                     args.grad_steps = 0
 
                 # (9a) update power usage calculation
-                if watcher is not None and (info := watcher.poll_latest()) is not None:
+                if (
+                    watcher is not None
+                    and args.train_steps % hparams.gradient_accumulation
+                    and (info := watcher.poll_latest()) is not None
+                ):
                     stats[4] += info.power
                     stats[5] += info.memory
                     stats[6] += info.gpu_util
