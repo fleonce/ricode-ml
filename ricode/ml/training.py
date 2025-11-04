@@ -1095,7 +1095,6 @@ def do_train(
                     stats[7] += info.memory_util
                     stats[8] += info.train_energy
                     stats[9] += info.validation_energy
-                    raise ValueError
 
                 # (9b) update total tokens statistics
                 if "attention_mask" in batch:
