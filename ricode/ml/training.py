@@ -1549,6 +1549,8 @@ def _save_loss_plot(
                     ),
                 },
             ]
+        if platform.system():
+            plots.pop()  # if on mac the power keys do not exist
 
         fig, axis = plt.subplots(
             1,
