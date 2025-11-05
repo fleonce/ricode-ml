@@ -1549,7 +1549,7 @@ def _save_loss_plot(
                     ),
                 },
             ]
-        if platform.system():
+        if platform.system() == "Darwin":
             plots.pop()  # if on mac the power keys do not exist
 
         fig, axis = plt.subplots(
