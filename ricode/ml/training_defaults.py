@@ -241,19 +241,22 @@ def evaluate_multikey_split_datasets(
                 raise ValueError("Cannot evaluate zero datasets")
 
             metrics_per_key = dict()
+            metrics_class = None
             for key in args.dataset[split].keys():
                 result = func(model, ProxyTrainingArgs(args, key), split, dataloader_fn)  # type: ignore
                 metrics_per_key[key] = result
+                metrics_class = metrics_class or result.__class__
 
             metrics = MetricsDict(None, **metrics_per_key)
-            return BasicMetrics.from_dict(metrics.to_dict())
+            return metrics_class.from_dict(metrics.to_dict())
         return func(model, args, split, dataloader_fn)
 
     return inner
 
 
 def multistage_evaluate_function(
-    *funcs: EvaluateProtocol[_T_cont, TDataset, THparams, _T_cov_metrics]
+    metrics_class: type[_T_cov_metrics],
+    *funcs: EvaluateProtocol[_T_cont, TDataset, THparams, _T_cov_metrics],
 ):
     if len(funcs) == 0:
         return False
@@ -264,7 +267,7 @@ def multistage_evaluate_function(
         split: str,
         dataloader_fn: DataLoaderProtocol[TDataset, THparams],
     ) -> _T_cov_metrics | MetricsDict[_T_cov_metrics]:
-        metrics = None
+        metrics = metrics_class()
         for func in funcs:
             func_metrics = func(
                 model,
@@ -272,11 +275,8 @@ def multistage_evaluate_function(
                 split,
                 dataloader_fn,
             )
-            if metrics is None:
-                metrics = func_metrics
-            else:
-                for key, value in func_metrics.__dict__.items():
-                    setattr(metrics, key, value)
+            for key, value in func_metrics.__dict__.items():
+                setattr(metrics, key, value)
         return metrics
 
     return inner
