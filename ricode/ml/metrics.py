@@ -18,10 +18,10 @@ from typing import (
 import torch
 import typing_extensions
 from torcheval.metrics import Metric, MulticlassConfusionMatrix
+from torcheval.metrics.classification.confusion_matrix import TMulticlassConfusionMatrix
 from torcheval.metrics.toolkit import sync_and_compute_collection
 from transformers import PreTrainedTokenizerBase
 
-from ricode.ml.distributed import distributed_world_size
 from ricode.ml.training_types import SupportsGetItemDataclass
 
 TensorTuple: TypeAlias = tuple[torch.Tensor, torch.Tensor]
@@ -164,9 +164,6 @@ class MultiMetric:
         }
 
     def compute(self) -> Mapping[str, torch.Tensor]:
-        if distributed_world_size() > 1:
-            return self.sync_and_compute()
-
         prefix = self.prefix or ""
         return {prefix + key: metric.compute() for key, metric in self.metrics.items()}
 
@@ -515,7 +512,7 @@ class _MulticlassConfusionMatrix(MulticlassConfusionMatrix):
         labels: Sequence[LabelType],
         position_aware: bool = False,
         *,
-        normalize: Optional[str] = None,
+        normalize: Optional[Literal["all", "pred", "true", "none"]] = None,
         device: Optional[torch.device] = None,
     ) -> None:
         super().__init__(len(labels) + 1, normalize=normalize, device=device)
@@ -527,6 +524,13 @@ class _MulticlassConfusionMatrix(MulticlassConfusionMatrix):
         if input.numel() == 0 and target.numel() == 0:
             return self
         return super().update(input, target)
+
+    @torch.inference_mode()
+    def compute(self: TMulticlassConfusionMatrix) -> torch.Tensor:
+        tensor = super().compute()
+        if self.normalize is None or self.normalize == "none":
+            return tensor.to(torch.long)
+        return tensor
 
 
 class NERConfusionMatrix(_MulticlassConfusionMatrix):
