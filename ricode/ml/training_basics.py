@@ -1,5 +1,6 @@
 import collections
 import dataclasses
+import fnmatch
 import itertools
 import json
 import logging
@@ -269,6 +270,10 @@ class BasicHparams(NameableConfig):
         return json.dumps(self.__dict__, indent=2)
 
 
+def _keys_match(metric: str, key: str):
+    return fnmatch.fnmatch(metric, key)
+
+
 class BasicMetrics:
     ignore_in_repr: ClassVar[set[str] | None] = None
     include_in_repr: ClassVar[set[str] | None] = None
@@ -287,14 +292,28 @@ class BasicMetrics:
 
     def __repr__(self):
         inner = list()
-        for key, value in self.__dict__.items():
-            if key in (self.__class__.ignore_in_repr or set()):
-                continue
-            if (
-                self.__class__.include_in_repr
-                and key not in self.__class__.include_in_repr
+        for metric, value in self.__dict__.items():
+            # if any of the keys in 'ignore_in_repr' do match the metric name
+            # do not include it in the
+            include = True
+            if any(
+                _keys_match(metric, key)
+                for key in (self.__class__.ignore_in_repr or set())
             ):
+                include = False
+
+            # allow include_in_repr to override the exclusion of keys!
+            if not include and any(
+                _keys_match(metric, key)
+                for key in (self.__class__.include_in_repr or set())
+            ):
+                include = True
+
+            # based on the result of the above filtering, ignore this metric or not
+            if not include:
                 continue
+
+            # dont include any null values
             if value is None:
                 continue
             elif isinstance(value, torch.Tensor):
@@ -302,7 +321,7 @@ class BasicMetrics:
                     dims = value.dim()
                     if dims > 1:
                         inner_inner = list()
-                        inner_inner.append(f"{key}={'[' * (dims - 1)}\n")
+                        inner_inner.append(f"{metric}={'[' * (dims - 1)}\n")
                         for indices in itertools.product(
                             *[range(value.size(dim)) for dim in range(dims - 1)]
                         ):
@@ -310,13 +329,13 @@ class BasicMetrics:
                         inner_inner.append("]" * (dims - 1))
                         inner.append("".join(inner_inner))
                     else:
-                        inner.append(f"{key}={format_tensor(value)}")
+                        inner.append(f"{metric}={format_tensor(value)}")
                     continue
                 value = value.item()
             elif not isinstance(value, float):
-                inner.append(f"{key}={value}")
+                inner.append(f"{metric}={value}")
                 continue
-            inner.append(f"{key}={value:.6f}")
+            inner.append(f"{metric}={value:.6f}")
         return f"{{{', '.join(inner)}}}"
 
     def __str__(self):
