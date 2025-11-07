@@ -1113,7 +1113,9 @@ def do_train(
                     accumulated_loss, num_batches_or_steps, g_norm, global_tokens = (
                         local_stats[:4].tolist()
                     )
-                    global_loss = accumulated_loss / max(1, num_batches_or_steps)
+                    global_loss = accumulated_loss / max(
+                        1, num_batches_or_steps // hparams.gradient_accumulation
+                    )
                     global_norm = g_norm / (
                         max(1, num_batches_or_steps // hparams.gradient_accumulation)
                     )
