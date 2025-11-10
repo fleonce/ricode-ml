@@ -84,10 +84,13 @@ def merge_update(base: dict, update_base: dict):
 
                 if isinstance(v, MutableSequence):
                     if action == "$add":
-                        v.extend(values)
+                        for element in values:
+                            if element not in v:
+                                v.append(element)
                     elif action == "$remove":
                         for element in values:
-                            v.remove(element)
+                            if element in v:
+                                v.remove(element)
                     else:
                         raise ValueError(action)
                 else:
@@ -173,14 +176,40 @@ def initialize_type_from_config(
     overrides=None,
     raise_if_missing=True,
     **init_kwargs,
-) -> InitializeType:
-    config = load_config_from_name_or_path(name_or_path)
+):
     include_filepath_in_init = None
     if isinstance(cls, ConfigProtocol):
         if section_name is None and cls.section_name is not None:
             section_name = cls.section_name
         if include_filepath_in_init is None and cls.include_filepath_in_init:
             include_filepath_in_init = True
+
+    kwargs = initialize_kwargs_from_config(
+        name_or_path,
+        section_name=section_name,
+        overrides=overrides,
+        raise_if_missing=raise_if_missing,
+        include_filepath_in_init=include_filepath_in_init,
+        **init_kwargs,
+    )
+
+    conf = cls(**kwargs)
+
+    if setup and setup_function_name is not None:
+        getattr(conf, setup_function_name)()
+    return conf
+
+
+def initialize_kwargs_from_config(
+    name_or_path: str | pathlib.Path,
+    /,
+    section_name=None,
+    overrides=None,
+    raise_if_missing=True,
+    include_filepath_in_init=False,
+    **init_kwargs,
+) -> InitializeType:
+    config = load_config_from_name_or_path(name_or_path)
 
     kwargs = config.get(section_name, None)
     if kwargs is None and raise_if_missing:
@@ -201,11 +230,7 @@ def initialize_type_from_config(
     kwargs = merge_update(kwargs, init_kwargs)
 
     # create a new config / whatever type class from the kwargs!
-    conf = cls(**kwargs)
-
-    if setup and setup_function_name is not None:
-        getattr(conf, setup_function_name)()
-    return conf
+    return kwargs
 
 
 def pad_to_length(inp: str) -> str:
