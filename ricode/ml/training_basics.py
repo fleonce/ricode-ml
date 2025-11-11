@@ -39,8 +39,16 @@ except ImportError as ie:
 InitializeType = TypeVar("InitializeType")
 
 
-def merge_update(base: dict, update_base: dict):
+def merge_update(
+    base: dict, update_base: dict, root: dict = None, new_root: dict = None
+):
     output = dict()
+    if new_root is None:
+        new_root = output
+
+    if root is None:
+        root = base
+
     keys = set(base.keys()) | set(update_base.keys())
     for k in keys:
         v = base.get(k, None)
@@ -64,6 +72,7 @@ def merge_update(base: dict, update_base: dict):
                 )
 
             updates = update_v["$$update"]
+            unset = False
             for update in updates:
                 if not isinstance(update, Mapping):
                     raise ValueError(
@@ -76,56 +85,94 @@ def merge_update(base: dict, update_base: dict):
                         f"Invalid update document, got {update!r}, expected single key mapping"
                     )
 
-                values = update[action]
-                if not isinstance(values, Sequence):
-                    raise ValueError(
-                        f"Values for {action!r} must be a sequence, got {values!r}"
-                    )
+                if action in {"$add", "$remove"}:
+                    values = update[action]
+                    if not isinstance(values, Sequence):
+                        raise ValueError(
+                            f"Values for {action!r} must be a sequence, got {values!r}"
+                        )
 
-                if isinstance(v, MutableSequence):
-                    if action == "$add":
-                        for element in values:
-                            if element not in v:
-                                v.append(element)
-                    elif action == "$remove":
-                        for element in values:
-                            if element in v:
-                                v.remove(element)
-                    else:
-                        raise ValueError(action)
-                else:
-                    # v is a MutableMapping
-                    for value in values:
-                        if not isinstance(value, Mapping):
-                            raise ValueError(
-                                f"Expected a mapping for values of {action!r}, got {value!r}"
-                            )
-
+                    if isinstance(v, MutableSequence):
                         if action == "$add":
-                            for kk, kv in value.items():
-                                v[kk] = kv
+                            for element in values:
+                                if element not in v:
+                                    v.append(element)
                         elif action == "$remove":
-                            for (
-                                kk,
-                                kv,
-                            ) in value.items():
-                                if kv is not None:
-                                    # remove only if value matches
-                                    if v[kk] == kv:
-                                        v.pop(kk)
-                                else:
-                                    # remove in any case
-                                    v.pop(kk)
+                            for element in values:
+                                if element in v:
+                                    v.remove(element)
                         else:
                             raise ValueError(action)
+                    else:
+                        # v is a MutableMapping
+                        for value in values:
+                            if not isinstance(value, Mapping):
+                                raise ValueError(
+                                    f"Expected a mapping for values of {action!r}, got {value!r}"
+                                )
+
+                            if action == "$add":
+                                for kk, kv in value.items():
+                                    v[kk] = kv
+                            elif action == "$remove":
+                                for (
+                                    kk,
+                                    kv,
+                                ) in value.items():
+                                    if kv is not None:
+                                        # remove only if value matches
+                                        if v[kk] == kv:
+                                            v.pop(kk)
+                                    else:
+                                        # remove in any case
+                                        v.pop(kk)
+                            else:
+                                raise ValueError(action)
+                elif action in {"$set", "$unset"}:
+                    target = update[action]
+                    if isinstance(target, str) and target.startswith("$"):
+                        if action == "$set":
+                            try:
+                                target_value = _get_nested_key(new_root, target[1:])
+                            except KeyNotFound:
+                                target_value = _get_nested_key(root, target[1:])
+                            v = target_value
+                        else:
+                            raise ValueError(action)
+                    else:
+                        if action == "$set":
+                            v = target
+                        elif action == "$unset":
+                            unset = True
+            if unset:
+                continue
             output[k] = v
         elif isinstance(v, dict):
             assert update_v is None or isinstance(update_v, dict)
             update_v = update_v or dict()
-            output[k] = merge_update(v, update_v)
+            output[k] = merge_update(v, update_v, root, new_root)
         else:
             output[k] = update_v if update_v is not None else v
     return output
+
+
+class KeyNotFound(Exception):
+    pass
+
+
+def _get_nested_key(mapping: dict, key: str) -> Optional[Any]:
+    if key in mapping:
+        return mapping[key]
+    elif "." in key:
+        head, remainder = key.split(".", maxsplit=1)
+        if head in mapping:
+            try:
+                return _get_nested_key(mapping[head], remainder)
+            except KeyNotFound:
+                raise KeyNotFound(mapping, key)
+        else:
+            raise KeyNotFound(mapping, key)
+    raise KeyNotFound(mapping, key)
 
 
 def find_config_path(name_or_path: str | Path) -> Path:
@@ -223,8 +270,10 @@ def initialize_kwargs_from_config(
     if overrides is not None:
         for override in overrides:
             override_config = load_config_from_name_or_path(override)
-            if section_name in override_config:
-                kwargs = merge_update(kwargs, override_config[section_name])
+            if section_name not in override_config:
+                continue
+            kwargs = merge_update({section_name: kwargs}, override_config)
+            kwargs = kwargs[section_name]
 
     # apply overrides specified via kwargs
     kwargs = merge_update(kwargs, init_kwargs)
