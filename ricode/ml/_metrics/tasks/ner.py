@@ -47,23 +47,21 @@ _BOUNDARIES_ENTITY_TYPE = "<boundaries entity type>"
 
 @dataclasses.dataclass(frozen=True)
 class Span(SupportsGetItemDataclass):
-    position_tokens_or_text: tuple[int, int] | tuple[int, ...] | str
+    # [0] = tokens_or_text
+    tokens_or_text: tuple[int, ...] | str
+    # [1] = type
     type: str
+    # [2] = Optional[position]
+    position: None | tuple[int, int]
 
     def as_tuple(self):
         return tuple(self)
 
     def change_type(self, new_type: str) -> "Span":
-        return Span(self.position_tokens_or_text, new_type)
+        return Span(self.tokens_or_text, new_type, self.position)
 
 
-@dataclasses.dataclass(frozen=True)
-class PositionalSpan(Span):
-    position_tokens_or_text: tuple[int, int]
-    type: str
-    tokens_or_text: tuple[int, ...] | str
-
-
+# TODO: what do we do with these two classes?
 @dataclasses.dataclass(frozen=True)
 class TokenizedSpan(Span):
     position_tokens_or_text: str | tuple[int, ...]
@@ -169,25 +167,23 @@ def _ner_score_check_element(
     strict: bool,
 ) -> PositionalEntity | NonPositionalEntity:
     if position_aware:
-        if not isinstance(element, (tuple, PositionalSpan)) or len(element) != 3:
+        if not isinstance(element, (tuple, Span)) or len(element) < 3:
             raise ValueError(
                 f"Element must be a tuple ((start, stop), type, [tokens]), got {element!r}"
             )
+        tokens = _is_tuple_of_tokens_or_str(element[0], "[tokens]")
         typ = _is_str(element[1], "type")
-        pos = _is_tuple_of_two_ints(element[0], "(start, stop)")
-        tokens = _is_tuple_of_tokens_or_str(element[2], "[tokens]")
-
-        if not strict:
-            return pos, _BOUNDARIES_ENTITY_TYPE, tokens
-        return pos, typ, tokens
+        pos = _is_tuple_of_two_ints(element[2], "(start, stop)")
     else:
-        if not isinstance(element, (tuple, Span)) or len(element) != 2:
-            raise ValueError(element, "must be a tuple ([tokens], type)")
+        if not isinstance(element, (tuple, Span)) or len(element) != 3:
+            raise ValueError(element, "must be a tuple ([tokens], type, None)")
         typ = _is_str(element[1], "type")
         tokens = _is_tuple_of_tokens_or_str(element[0], "[tokens]")
-        if not strict:
-            return tokens, _BOUNDARIES_ENTITY_TYPE
-        return tokens, typ
+        pos = None
+
+    if not strict:
+        return pos, tokens, _BOUNDARIES_ENTITY_TYPE
+    return pos, tokens, typ
 
 
 def _ner_score_check_set(

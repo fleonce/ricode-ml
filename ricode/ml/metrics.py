@@ -15,14 +15,7 @@ from torcheval.metrics import Metric, MulticlassConfusionMatrix
 from torcheval.metrics.classification.confusion_matrix import TMulticlassConfusionMatrix
 from torcheval.metrics.toolkit import sync_and_compute_collection
 
-from ricode.ml._metrics import (
-    ELSpan,
-    PositionalSpan,
-    Relation,
-    RelationWithProbability,
-    Span,
-    TwoSpans,
-)
+from ricode.ml._metrics import ELSpan, Relation, RelationWithProbability, Span, TwoSpans
 
 from ricode.ml._metrics.functional import (
     _f1_score_compute,
@@ -62,7 +55,6 @@ __all__ = [
     "ELPrecision",
     "ELRecall",
     "Span",
-    "PositionalSpan",
     "Relation",
     "RelationWithProbability",
     "ELSpan",

@@ -11,6 +11,12 @@ def _is_tuple_of_two_ints(element: Any, name: str) -> tuple[int, int]:
     return element  # noqa
 
 
+def _is_none(element: Any, name: str) -> None:
+    if element is not None:
+        raise ValueError(f"{name} must be None, but got {element!r}")
+    return None
+
+
 def _is_str(element: Any, name: str) -> str:
     if not isinstance(element, str):
         raise ValueError(f"{name} must be a str, but is {element!r}")

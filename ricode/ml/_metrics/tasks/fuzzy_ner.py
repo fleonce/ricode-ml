@@ -8,6 +8,7 @@ from ricode.ml._metrics.functional import (
     _f1_score_flatten_batch,
     BatchedOutputs,
     LabelType,
+    Outputs,
 )
 from ricode.ml._metrics.tasks.ner import (
     _ner_score_check_set,
@@ -15,6 +16,7 @@ from ricode.ml._metrics.tasks.ner import (
     TokenizedSpan,
     WordBoundarySpan,
 )
+from ricode.ml._metrics.utils import _is_tuple_of_two_ints
 
 
 def _fuzzy_ner_score_update(
@@ -71,7 +73,8 @@ T = TypeVar("T")
 
 
 def _fuzzy_compare(
-    a: tuple[int, Any, LabelType, str], b: tuple[int, Any, LabelType, str]
+    a: tuple[int, *tuple[Any, ...], LabelType],
+    b: tuple[int, *tuple[Any, ...], str, LabelType],
 ) -> bool:
     # if the batch id does not match, we never match
     if a[0] != b[0]:
@@ -82,12 +85,12 @@ def _fuzzy_compare(
     # element "a" is always from outputs
     # element "b" is always from targets
     # fuzzy match a to b => a may be larger than b?
-    a_pos = a[1]
-    b_pos = b[1]
+    a_pos = _is_tuple_of_two_ints(a[1], "position")
+    b_pos = _is_tuple_of_two_ints(b[1], "position")
     overlap = a_pos[0] <= b_pos[0] <= a_pos[1]
     if a_pos == b_pos:
         # if the positions match, return whether label is correct
-        return a[2] == b[2]
+        return a[-1] == b[-1]
 
     if not overlap:
         return False
@@ -102,7 +105,7 @@ def _fuzzy_compare(
 
     if small_overlap:
         # still, we want to capture whether the predicted label is correct
-        return a[2] == b[2]
+        return a[-1] == b[-1]
     return False
 
 
@@ -131,8 +134,8 @@ def _fuzzy_set_size_operation(
 
 
 def _fuzzy_f1_score_update_flattened(
-    outputs: set[tuple[int, Any, LabelType]],
-    targets: set[tuple[int, Any, LabelType]],
+    outputs: Outputs,
+    targets: Outputs,
     average: Literal["micro", "macro", "none"],
     labels: Optional[Sequence[LabelType]],
     device: torch.device,

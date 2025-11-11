@@ -1,5 +1,5 @@
 import dataclasses
-from typing import Any, Literal, Optional, Sequence, TypeAlias
+from typing import Any, Literal, Optional, Sequence, TypeAlias, Union
 
 import torch
 
@@ -12,7 +12,14 @@ from ricode.ml._metrics.functional import (
 from ricode.ml._metrics.tasks.ner import _ner_score_check_set, Span
 from ricode.ml._metrics.utils import _is_int, _is_str, _is_tuple_of_tokens_or_str
 
-ELEntity: TypeAlias = tuple[tuple[tuple[int, ...], int], LabelType]
+ELEntity: TypeAlias = tuple[
+    # tokens_or_text
+    Union[tuple[int, ...], str],
+    # el label type
+    LabelType,
+    # position
+    int,
+]
 
 
 @dataclasses.dataclass(frozen=True)
@@ -52,10 +59,10 @@ def _el_score_check_element(
 ) -> ELEntity:
     if not isinstance(element, (tuple, ELSpan)) or len(element) != 3:
         raise ValueError(element, "must be a tuple ([tokens], type)")
-    typ = _is_str(element[1], "type")
     tokens = _is_tuple_of_tokens_or_str(element[0], "[tokens]")
+    typ = _is_str(element[1], "type")
     pos = _is_int(element[2], "position")
-    return (tokens, pos), typ
+    return tokens, typ, pos
 
 
 def _el_score_check_set(

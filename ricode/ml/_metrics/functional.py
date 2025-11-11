@@ -7,9 +7,9 @@ TensorTuple: TypeAlias = tuple[torch.Tensor, torch.Tensor]
 
 LabelType: TypeAlias = Union[int, str]
 LabelGeneric = TypeVar("LabelGeneric", int, str)
-Output: TypeAlias = tuple[int, Any, LabelType]
-Outputs: TypeAlias = set[tuple[int, Any, LabelType]]
-BatchedOutputs: TypeAlias = Sequence[set[tuple[Any, LabelType]]]
+Output: TypeAlias = tuple[int, *tuple[Any, ...], LabelType]
+Outputs: TypeAlias = set[Output]
+BatchedOutputs: TypeAlias = Sequence[set[tuple[*tuple[Any, ...], LabelType]]]
 
 
 def _replace_nan_with_zero(tensor: Tensor) -> Tensor:
@@ -41,9 +41,7 @@ def _f1_score_compute(
     return precision, recall, f1
 
 
-def _f1_score_flatten_batch(
-    batched_elements: Sequence[set[tuple[Any, LabelType]]]
-) -> set[tuple[int, Any, LabelType]]:
+def _f1_score_flatten_batch(batched_elements: BatchedOutputs) -> Outputs:
     """
     Remap a batch of elements to a single large set, makes computing TP, FP, FN easier
 
@@ -82,8 +80,8 @@ def _f1_score_update(
 
 
 def _f1_score_update_flattened(
-    outputs: set[tuple[int, Any, int | str]],
-    targets: set[tuple[int, Any, int | str]],
+    outputs: Outputs,
+    targets: Outputs,
     average: Literal["micro", "macro", "none"],
     labels: Optional[Sequence[LabelType]],
     device: torch.device,
@@ -135,9 +133,9 @@ def _confusion_set_to_tensor(
     for elem in outputs_and_targets:
         pos = mapping[elem]
         if elem in outputs:
-            conf_labels[0, pos] = labels.index(elem[2])
+            conf_labels[0, pos] = labels.index(elem[-1])
         if elem in targets:
-            conf_labels[1, pos] = labels.index(elem[2])
+            conf_labels[1, pos] = labels.index(elem[-1])
     return conf_labels[0], conf_labels[1]
 
 
