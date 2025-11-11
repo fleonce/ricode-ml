@@ -152,7 +152,7 @@ class ContaminatedMixin:
 class TypesInfo:
     entity_types: list[str]
     relation_types: list[str] | None
-    symmetric_relation_types: set[str] | None
+    symmetric_relation_types: list[str] | None
     type: Literal["ner", "relation_extraction", "entity_linking"]
     nest_depth: int
 
@@ -237,7 +237,7 @@ class TypesMixin:
             ),
             map_if_not_none(
                 types_info.get("relations", None),
-                lambda t: {k for k, v in t.items() if v.get("symmetric", False)},
+                lambda t: [k for k, v in t.items() if v.get("symmetric", False)],
             ),
             type=types_info.get(
                 "type",
