@@ -10,7 +10,11 @@ from ricode.ml._metrics.functional import (
     TensorTuple,
 )
 from ricode.ml._metrics.tasks.ner import _ner_score_check_set, Span
-from ricode.ml._metrics.utils import _is_int, _is_str, _is_tuple_of_tokens_or_str
+from ricode.ml._metrics.utils import (
+    _is_str,
+    _is_tuple_of_tokens_or_str,
+    _is_tuple_of_two_ints,
+)
 
 ELEntity: TypeAlias = tuple[
     # tokens_or_text
@@ -18,7 +22,7 @@ ELEntity: TypeAlias = tuple[
     # el label type
     LabelType,
     # position
-    int,
+    tuple[int, int],
 ]
 
 
@@ -57,11 +61,11 @@ def _el_score_update(
 def _el_score_check_element(
     element: Any,
 ) -> ELEntity:
-    if not isinstance(element, (tuple, ELSpan)) or len(element) != 3:
+    if not isinstance(element, (tuple, Span)) or len(element) != 3:
         raise ValueError(element, "must be a tuple ([tokens], type)")
     tokens = _is_tuple_of_tokens_or_str(element[0], "[tokens]")
     typ = _is_str(element[1], "type")
-    pos = _is_int(element[2], "position")
+    pos = _is_tuple_of_two_ints(element[2], "position")
     return tokens, typ, pos
 
 
