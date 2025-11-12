@@ -1317,6 +1317,9 @@ def do_test(
     if model.device != device:
         model = model.to(device)
 
+    old_state = model.training
+    model.eval()
+
     with (
         logging_redirect_tqdm(),
         torch.no_grad(),
@@ -1328,7 +1331,11 @@ def do_test(
             "test",
             dataloader_fn,
         )
-        return test_metrics
+
+    # restore training mode
+    model.train(old_state)
+
+    return test_metrics
 
 
 # https://stackoverflow.com/questions/5283649/plot-smooth-line-with-pyplot
