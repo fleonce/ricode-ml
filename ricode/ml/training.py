@@ -563,6 +563,27 @@ def check_parameters_for_nan(model: TModel, strict: bool):
             warnings.warn(msg)
 
 
+def _parse_num_steps(inp: str, steps_per_epoch: int):
+    try:
+        return int(inp)
+    except ValueError:
+        # input is not a simple str, try splitting into two parts, value and unit
+        args = inp.split()
+        error = f'Expected "X epochs" or "X steps", got {inp!r}'
+        if len(args) != 2 or args[1] not in {"steps", "epochs"}:
+            raise ValueError(error)
+        try:
+            value = int(args[0])
+        except ValueError:
+            raise ValueError(error)
+        if value < 0:
+            raise ValueError(error)
+        if args[1] == "steps":
+            return value
+        else:
+            return value * steps_per_epoch
+
+
 def get_training_steps(
     setup_dataloader: DataLoaderProtocol[TDataset, THparams],
     args: TrainingArgs[THparams, TDataset],
