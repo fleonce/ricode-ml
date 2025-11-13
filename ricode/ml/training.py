@@ -1678,7 +1678,7 @@ def _save_loss_plot(
 
             if m not in color_presets:
                 if c is None:
-                    c = colors[cmap_index]
+                    c = colors[cmap_index % len(colors)]
                     cmap_index += 1
 
                 if f is not None:
