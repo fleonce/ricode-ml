@@ -513,7 +513,9 @@ class BasicDataset(NameableConfig):
             split, split_info, is_final=is_final
         )
 
-    def _split_filename_additional_args(self, split: str, path: str) -> list[str]:
+    def _split_filename_additional_args(
+        self, split: str, split_info: SplitInfo
+    ) -> list[str]:
         return list()
 
     def _split_filename(
@@ -531,9 +533,7 @@ class BasicDataset(NameableConfig):
                 tokenizer_name = self.tokenizer_config.model_type
                 if tokenizer_name != "t5":
                     filename = filename + "_tk_" + tokenizer_name
-            for arg in self._split_filename_additional_args(
-                split, split_info.name_or_file
-            ):
+            for arg in self._split_filename_additional_args(split, split_info):
                 filename = filename + arg
             if self._storage_prefix:
                 filename = self._storage_prefix + filename
@@ -629,9 +629,7 @@ class HuggingfaceDataset(BasicDataset):
         if is_final:
             filepath = split_info.path
             filename = filepath.name + "_" + split
-            for arg in self._split_filename_additional_args(
-                split, split_info.name_or_file
-            ):
+            for arg in self._split_filename_additional_args(split, split_info):
                 filename = filename + arg
             if split_info.extension == ".safetensors":
                 return filename + ".safetensors"
