@@ -1,3 +1,4 @@
+import os
 import queue
 from collections import OrderedDict
 from queue import SimpleQueue
@@ -35,11 +36,22 @@ def watcher(
     args: TrainingArgs[THparams, TDataset],
     interval: float = 0.1,
 ):
-    local_device = "cuda:0"
+    local_device = args.local_device
     if local_device is not None and local_device.startswith("cuda:"):
         from pynvml import nvmlDeviceGetHandleByIndex
 
-        device_handle = nvmlDeviceGetHandleByIndex(int(local_device[len("cuda:") :]))
+        device_id = int(local_device[len("cuda:") :])
+        try:
+            if os.environ.get("CUDA_VISIBLE_DEVICES"):
+                if "CUDA_LOCAL_DEVICE" in os.environ:
+                    device_id = int(os.environ["CUDA_LOCAL_DEVICE"])
+                else:
+                    visible_devices = os.environ["CUDA_VISIBLE_DEVICES"].split(",")
+                    device_id = int(visible_devices[device_id])
+        except (ValueError, IndexError):
+            device_id = 0
+
+        device_handle = nvmlDeviceGetHandleByIndex(device_id)
     else:
         return
 
