@@ -203,7 +203,7 @@ def setup_optimizers(
     effective_batch_size = args.hparams.batch_size * args.hparams.gradient_accumulation
 
     lr = args.hparams.lr
-    if args.hparams.scale_lr:
+    if hasattr(args.hparams, "scale_lr") and getattr(args.hparams, "scale_lr", False):
         lr = lr * effective_batch_size
 
     optimizer = AdamW(
