@@ -19,6 +19,33 @@ from ricode.ml.training_datasets import BasicDataset, SplitInfo
 from ricode.ml.training_utils import cached_property, map_if_not_none
 
 
+def load_types_info(data_path: str, types_path: str):
+    file_path = os.path.join(data_path, types_path)
+    with open(file_path) as types_f:
+        types_info = json.load(types_f)
+
+    info = TypesInfo(
+        list(sorted(types_info["entities"].keys())),
+        map_if_not_none(
+            types_info.get("relations", None), lambda t: list(sorted(t.keys()))
+        ),
+        map_if_not_none(
+            types_info.get("relations", None),
+            lambda t: [k for k, v in t.items() if v.get("symmetric", False)],
+        ),
+        type=types_info.get(
+            "type",
+            (
+                "ner"
+                if len(types_info.get("relations", [])) == 0
+                else "relation_extraction"
+            ),
+        ),
+        nest_depth=types_info.get("nest_depth", 1),
+    )
+    return info
+
+
 class TokenizerMixin:
     tokenizer_class: ClassVar[PreTrainedTokenizerBase] = AutoTokenizer
 
@@ -225,28 +252,7 @@ class TypesMixin:
             getattr(self, "data_path"), Path
         ):
             raise ValueError(f"{self.__class__.__name__}.data_path must be a Path")
-        data_path: Path = getattr(self, "data_path")
-        file_path = data_path / types_path
-        with open(file_path) as types_f:
-            types_info = json.load(types_f)
-
-        info = TypesInfo(
-            list(sorted(types_info["entities"].keys())),
-            map_if_not_none(
-                types_info.get("relations", None), lambda t: list(sorted(t.keys()))
-            ),
-            map_if_not_none(
-                types_info.get("relations", None),
-                lambda t: [k for k, v in t.items() if v.get("symmetric", False)],
-            ),
-            type=types_info.get(
-                "type",
-                (
-                    "ner"
-                    if len(types_info.get("relations", [])) == 0
-                    else "relation_extraction"
-                ),
-            ),
-            nest_depth=types_info.get("nest_depth", 1),
+        return load_types_info(
+            getattr(self, "data_path").as_posix(),
+            types_path,
         )
-        return info
