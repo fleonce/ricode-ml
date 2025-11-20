@@ -130,7 +130,7 @@ class BasicDataset(NameableConfig):
     split_names: ClassVar[set[str]] = {"train", "test", "eval"}
     use_multiprocessing: ClassVar[bool] = False
     use_shards: ClassVar[bool] = True
-    shard_size: ClassVar[int] = 1000
+    shard_size: ClassVar[int] = 10000
 
     name: str
     data_dir: str
@@ -283,6 +283,14 @@ class BasicDataset(NameableConfig):
 
             if isinstance(example, list) or isinstance(example, tuple):
                 for example_elem in example:
+                    if isinstance(example_elem, SkipExample):
+                        cause = example_elem.cause
+                        if cause not in infos:
+                            infos[cause] = 1
+                        else:
+                            infos[cause] += 1
+                        tq.set_postfix(infos)
+                        continue
                     append_to_map(output, example_elem)
             elif isinstance(example, dict):
                 append_to_map(output, example)
