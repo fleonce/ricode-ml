@@ -8,6 +8,7 @@ from collections import OrderedDict
 from multiprocessing import cpu_count
 from multiprocessing.pool import Pool
 from pathlib import Path
+from random import Random
 from typing import (
     Any,
     Callable,
@@ -33,6 +34,8 @@ from tqdm import tqdm
 from tqdm.contrib.logging import logging_redirect_tqdm
 from transformers import PretrainedConfig
 
+from ricode.ml.datasets.concatenated import ConcatenatedSafetensorsDataset
+from ricode.ml.datasets.index import IndexDataset
 from ricode.ml.distributed.utils import rank_zero_first
 from ricode.ml.training_basics import NameableConfig
 from ricode.ml.training_types import SupportsGetItem, TDataset, THparams, TrainingArgs
@@ -132,6 +135,8 @@ class BasicDataset(NameableConfig):
     name: str
     data_dir: str
     splits: Mapping[str, SplitInfo | dict[str, SplitInfo]]
+    crossvalidation: bool = False
+    crossvalidation_seed: int = 42
 
     data: DataDict = dataclasses.field(default_factory=OrderedDict)
     is_hpo: bool = False
@@ -382,6 +387,27 @@ class BasicDataset(NameableConfig):
                 self._setup_dict_split(split, split_info)
             else:
                 self._setup_split(split, split_info)
+
+        if self.crossvalidation:
+            flattened_data = OrderedDict(
+                {
+                    (split, name): dataset
+                    for split, datasets in self.data.items()
+                    for name, dataset in datasets.items()
+                }
+            )
+            full_dataset = ConcatenatedSafetensorsDataset(flattened_data)
+            total_length = len(full_dataset)
+            indices = list(range(total_length))
+            random = Random(self.crossvalidation_seed)
+            train_indices = set(random.sample(indices, k=int(total_length * 0.9)))
+            test_indices = set(indices) - train_indices
+
+            self.data = {
+                "train": {"crossvalidation": IndexDataset(train_indices, full_dataset)},
+                "test": {"crossvalidation": IndexDataset(test_indices, full_dataset)},
+                "eval": {"crossvalidation": IndexDataset(test_indices, full_dataset)},
+            }
 
     def setup_hpo(self):
         eval_spit = self.data.get("dev", self.data.get("eval", None))
