@@ -794,7 +794,7 @@ def do_train(
     logger: Optional[logging.Logger] = None,
     seed: int = 42,
     use_tqdm: bool = True,
-    use_bfloat16: bool = False,
+    use_bfloat16: Optional[bool] = None,
     use_fsdp: NoneType = None,
     job_config: Optional[JobConfig] = None,
     use_tensorboard: bool = True,
@@ -828,6 +828,9 @@ def do_train(
     Sets up datasets, seeding, reproducibility, model.
     Contains the main training loop, handles evaluation, too.
     """
+    if use_bfloat16 is None:
+        use_bfloat16 = True
+
     if device is None:
         device = _get_default_device()
 
@@ -847,7 +850,6 @@ def do_train(
 
     if job_config is None:
         job_config = JobConfig()
-    use_fsdp = job_config.parallelize.dp_mode == "fsdp"
 
     if hooks is None:
         hooks = Hooks()
