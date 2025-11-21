@@ -223,7 +223,7 @@ def initialize_type_from_config(
     overrides=None,
     raise_if_missing=True,
     **init_kwargs,
-):
+) -> InitializeType:
     include_filepath_in_init = None
     if isinstance(cls, ConfigProtocol):
         if section_name is None and cls.section_name is not None:
