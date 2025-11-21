@@ -1,14 +1,13 @@
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
 import attrs
-from safetensors_dataset.dict_dataset import SafetensorsDataset
 
 from ricode.ml.training_types import SupportsGetItemAndLength
 from ricode.ml.training_utils import cached_property
 
 
 @attrs.define
-class ConcatenatedDataset:
+class ConcatenatedDatasetOld:
     datasets: list[SupportsGetItemAndLength[Any]]
 
     @cached_property
@@ -39,11 +38,15 @@ class ConcatenatedDataset:
         return self.cumulative_lengths[-1]
 
 
-class ConcatenatedSafetensorsDataset:
-    def __init__(self, dataset: Mapping[Any, SafetensorsDataset]):
-        self.keys = list(sorted(dataset.keys()))
-        self.dataset = dataset
-        self.datasets = [dataset[k] for k in self.keys]
+class ConcatenatedDataset:
+    @classmethod
+    def from_mapping(cls, m: Mapping[Any, SupportsGetItemAndLength[Any]]):
+        keys = list(sorted(m.keys()))
+        datasets = [m[k] for k in keys]
+        return cls(datasets)
+
+    def __init__(self, datasets: Sequence[SupportsGetItemAndLength[Any]]):
+        self.datasets = datasets
         self.sizes = list(map(lambda d: len(d), self.datasets))
         self.size = sum(self.sizes)
 

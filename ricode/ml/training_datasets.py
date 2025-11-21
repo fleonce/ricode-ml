@@ -34,7 +34,7 @@ from tqdm import tqdm
 from tqdm.contrib.logging import logging_redirect_tqdm
 from transformers import PretrainedConfig
 
-from ricode.ml.datasets.concatenated import ConcatenatedSafetensorsDataset
+from ricode.ml.datasets.concatenated import ConcatenatedDataset
 from ricode.ml.datasets.index import IndexDataset
 from ricode.ml.distributed.utils import rank_zero_first
 from ricode.ml.training_basics import NameableConfig
@@ -404,7 +404,7 @@ class BasicDataset(NameableConfig):
                     for name, dataset in datasets.items()
                 }
             )
-            full_dataset = ConcatenatedSafetensorsDataset(flattened_data)
+            full_dataset = ConcatenatedDataset.from_mapping(flattened_data)
             total_length = len(full_dataset)
             indices = list(range(total_length))
             random = Random(self.crossvalidation_seed)

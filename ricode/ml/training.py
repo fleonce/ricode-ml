@@ -600,6 +600,7 @@ def get_training_steps(
     try:
         steps_per_epoch = len(epoch_dataloader)
     except TypeError:
+        warnings.warn(f"Could not infer length of {type(epoch_dataloader)!r}")
         if not isinstance(args.hparams, StepBasedTraining):
             raise
         steps_per_epoch = args.hparams.num_steps

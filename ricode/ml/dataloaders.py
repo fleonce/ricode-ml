@@ -1,15 +1,36 @@
 import sys
 import time
 import warnings
-from typing import Callable, Optional, Protocol, Sequence, TypeAlias, TypeVar
+from typing import (
+    Any,
+    Callable,
+    Iterable,
+    Optional,
+    Protocol,
+    Sequence,
+    TypeAlias,
+    TypeVar,
+)
 
 import torch
 from more_itertools.recipes import flatten
 from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import DataLoader, DistributedSampler, IterableDataset
+from torch.utils.data.sampler import (
+    BatchSampler,
+    RandomSampler,
+    Sampler,
+    SequentialSampler,
+)
 
+from ricode.ml.datasets.concatenated import ConcatenatedDataset
 from ricode.ml.training_basics import BasicHparams, Batch
-from ricode.ml.training_types import HasDatasetProperties, SupportsNext, TrainingArgs
+from ricode.ml.training_types import (
+    HasDatasetProperties,
+    SupportsGetItemAndLength,
+    SupportsNext,
+    TrainingArgs,
+)
 
 _T_dataset = TypeVar("_T_dataset", bound=HasDatasetProperties)
 _T_hparams = TypeVar("_T_hparams", bound=BasicHparams)
@@ -72,11 +93,16 @@ def setup_dataloader(
     pin_memory: bool = False,
     batch_size: Optional[int | Callable[[str], int]] = None,
     num_workers: int = 0,
+    dataset: Optional[torch.utils.data.Dataset[Any]] = None,
+    batch_sampler: Optional[Sampler[list[int]]] = None,
 ) -> DataLoader:
-    if not isinstance(args.dataset, HasDatasetProperties):
-        raise ValueError(
-            f"Dataset must be a HasDatasetProperties protocol instance, got {type(args.dataset)}"
-        )
+    if dataset is None:
+        if not isinstance(args.dataset, HasDatasetProperties):
+            raise ValueError(
+                f"Dataset must be a HasDatasetProperties protocol instance, got {type(args.dataset)}"
+            )
+        dataset = args.dataset[split]
+
     if collate_fn is None:
         collate_fn = SequencePaddingDataCollator(0)
 
@@ -86,25 +112,25 @@ def setup_dataloader(
         batch_size = batch_size(split)
 
     do_shuffle = train is True
-    if isinstance(args.dataset[split], IterableDataset):
+    if isinstance(dataset, IterableDataset):
         do_shuffle = False
 
     dataloader_kwargs = {
         "batch_size": batch_size,
         "collate_fn": collate_fn,
-        "dataset": args.dataset[split],
+        "dataset": dataset,
         "shuffle": do_shuffle,
         "generator": args.generator,
-        "drop_last": train is True and args.use_fsdp,
+        "drop_last": train is True and args.job_config.parallelize.dp_mode == "fsdp",
         "pin_memory": pin_memory,
         "num_workers": num_workers,
     }
-    if args.use_fsdp:
+    if args.job_config.parallelize.dp_mode != "none":
         shuffle = dataloader_kwargs.pop("shuffle")
         dataloader_kwargs.pop("drop_last")
         sampler: DistributedSampler
         sampler = DistributedSampler(
-            args.dataset[split],
+            dataset,
             args.world_size,
             args.rank,
             shuffle,
@@ -115,6 +141,14 @@ def setup_dataloader(
             sampler.set_epoch(args.epoch)
 
         dataloader_kwargs.update({"sampler": sampler})
+
+    if batch_sampler is not None:
+        if args.job_config.parallelize.dp_mode != "none":
+            raise NotImplementedError
+
+        dataloader_kwargs.pop("batch_size")
+        dataloader_kwargs.pop("shuffle")
+        dataloader_kwargs["batch_sampler"] = batch_sampler
     return DataLoader(**dataloader_kwargs)
 
 
@@ -229,6 +263,42 @@ class InfiniteDataLoader:
 
     def __len__(self):
         return sys.maxsize
+
+
+class JoinedBatchSampler(Sampler[list[int]]):
+    def __init__(self, samplers: Iterable[BatchSampler]):
+        super().__init__()
+        self.samplers = samplers
+
+    def __iter__(self):
+        for samples in zip(*self.samplers):
+            yield flatten(samples)
+        pass
+
+    def __len__(self):
+        return min(len(sampler) for sampler in self.samplers)
+
+
+def join_datasets(
+    datasets: Sequence[SupportsGetItemAndLength[Any]],
+    batch_sizes: Sequence[int],
+    shuffle: bool,
+    generator: Optional[torch.Generator],
+    drop_last: bool,
+):
+    concatenated_dataset = ConcatenatedDataset(datasets)
+
+    if shuffle:
+        samplers = [RandomSampler(dataset, generator=generator) for dataset in datasets]
+    else:
+        samplers = [SequentialSampler(dataset) for dataset in datasets]
+
+    batch_samplers = [
+        BatchSampler(sampler, batch_size, drop_last)
+        for sampler, batch_size in zip(samplers, batch_sizes)
+    ]
+    batch_sampler = JoinedBatchSampler(batch_samplers)
+    return concatenated_dataset, batch_sampler
 
 
 class SequencePaddingDataCollator:
