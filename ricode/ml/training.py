@@ -1250,9 +1250,10 @@ def do_train(
                                     f"Found new best checkpoint ({args.hparams.optimize_for}, {new_score:.8f}), saved to {checkpoint_path.as_posix()}"
                                 )
                         elif new_checkpoint_logic:
-                            logger.info(
-                                f"Saving checkpoint at {args.train_steps} training steps to {checkpoint_path.as_posix()}"
-                            )
+                            if not dont_ckpt and not memory_checkpoints:
+                                logger.info(
+                                    f"Saving checkpoint at {args.train_steps} training steps to {checkpoint_path.as_posix()}"
+                                )
 
                     if patience_exceeded:
                         stop_after_epoch = True
