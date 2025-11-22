@@ -1265,13 +1265,16 @@ def do_train(
 
     args.done = True
     energy_info = watcher.wait_until_finish()
-    total_energy = energy_info.train_energy + energy_info.validation_energy
+    if energy_info is not None:
+        total_energy = energy_info.train_energy + energy_info.validation_energy
 
-    logger.info(
-        f"Used {format_to_energy_usage(total_energy)} of energy ("
-        f"{format_to_energy_usage(energy_info.train_energy).strip()} for train, "
-        f"{format_to_energy_usage(energy_info.validation_energy).strip()} for validation)"
-    )
+        logger.info(
+            f"Used {format_to_energy_usage(total_energy).strip()} of energy ("
+            f"{format_to_energy_usage(energy_info.train_energy).strip()} for train, "
+            f"{format_to_energy_usage(energy_info.validation_energy).strip()} for validation)"
+        )
+    else:
+        logger.warning("Watcher failed, could not retrieve energy usage statistics")
 
     if job_config.parallelize.dp_mode != "none":
         logger.info("Waiting at save barrier")

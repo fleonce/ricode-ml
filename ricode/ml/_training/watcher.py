@@ -234,10 +234,20 @@ class Watcher:
                 break
         return self.latest
 
-    def wait_until_finish(self) -> EnergyStatistics:
-        while (_ := self.queue.get()) is not None:
+    def _try_queue_get(self, timeout, otherwise):
+        try:
+            item = self.queue.get(timeout=timeout)
+            if item is not None:
+                self.latest = item
+            return item
+        except (TimeoutError, queue.Empty):
+            return otherwise
+
+    def wait_until_finish(self) -> Optional[EnergyStatistics]:
+        timeout = 3
+        while (_ := self._try_queue_get(timeout, None)) is not None:
             continue
-        return self.queue.get()
+        return self._try_queue_get(timeout, self.latest)
 
 
 class watcher_tqdm(tqdm):  # noqa
