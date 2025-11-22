@@ -1303,6 +1303,18 @@ def do_train(
                 dirs_exist_ok=True,
             )
 
+        if memory_checkpoints:
+            save_checkpoint(
+                args,
+                model,
+                optimizer,
+                lr_scheduler,
+                model_path,
+                dont_ckpt,
+                memory_checkpoints=False,
+                new_best=False,
+            )
+
     model_dir = Path(model_path)
     if not do_profile:
         test_metrics = do_test(
