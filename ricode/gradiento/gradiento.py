@@ -33,7 +33,7 @@ folder_parents = defaultdict(list)
 roots = []
 for root, folders, files in os.walk(args.path):
     if (
-        "experiment.json" in files
+        ("experiment.json" in files or "config.json" in files)
         and root not in model_folders
         and ("loss.pdf" in files or "loss.svg" in files or len(folders) > 0)
     ):
@@ -92,8 +92,12 @@ def _load_image(button, folder: str):
         else:
             svg_path = os.path.join(folder, "step-" + str(stepcount), "loss.svg")
 
-    with open(os.path.join(folder, "experiment.json")) as f:
-        json_config = json.load(f)["training"]
+    if os.path.exists(os.path.join(folder, "experiment.json")):
+        with open(os.path.join(folder, "experiment.json")) as f:
+            json_config = json.load(f)["training"]
+    else:
+        with open(os.path.join(folder, "config.json")) as f:
+            json_config = json.load(f)
 
     return [
         gr.update(visible=False),
