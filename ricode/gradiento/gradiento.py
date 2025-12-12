@@ -32,7 +32,7 @@ args = GradientoArgs(os.environ["GRADIENTO_PATH"])
 
 model_folders = []
 for root, folders, files in os.walk(args.path):
-    if "loss.pdf" in files and root not in model_folders:
+    if "experiment.json" in files and root not in model_folders:
         model_folders.append(root)
     for subfolder in list(folders):
         if subfolder.startswith("step-"):
