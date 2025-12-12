@@ -1,5 +1,8 @@
+import functools
+import json
 import os
 import subprocess
+from collections import defaultdict
 
 import gradio as gr
 import more_itertools
@@ -12,35 +15,53 @@ def func(a: str):
 
 
 title_css = """
-h1 {
+h1 .centered {
     text-align: center;
     display: block;
 }
 
-h2 {
+h2 .centered {
     text-align: center;
     display: block;
 }
 """
 
-# inkscape \
-#   --without-gui \
-#   --file=input.pdf \
-#   --export-plain-svg=output.svg
 args = GradientoArgs(os.environ["GRADIENTO_PATH"])
 
-
 model_folders = []
+folder_parents = defaultdict(list)
+roots = []
 for root, folders, files in os.walk(args.path):
-    if "experiment.json" in files and root not in model_folders:
+    if (
+        "experiment.json" in files
+        and root not in model_folders
+        and ("loss.pdf" in files or "loss.svg" in files or len(folders) > 0)
+    ):
+        for known_root in roots:
+            if root.startswith(known_root):
+                folder_parents[root].append(known_root)
         model_folders.append(root)
+    if len(files) == 0 and len(folders) > 0:
+        if os.path.dirname(root) in roots:
+            roots.remove(os.path.dirname(root))
+        roots.append(root)
+
     for subfolder in list(folders):
         if subfolder.startswith("step-"):
             folders.remove(subfolder)
-folders_per_row = 4
+roots = roots[1:]
+folder_parents = {k: tuple(sorted(v, key=len)) for k, v in folder_parents.items()}
+parents_to_folders = {v: [] for v in folder_parents.values()}
+for key, value in folder_parents.items():
+    parents_to_folders[value].append(key)
+parents_to_folders = {k: v for k, v in parents_to_folders.items() if len(v) > 0}
+parents_to_folders = {k: list(sorted(v)) for k, v in parents_to_folders.items()}
+
+folders_per_row = 5
+key_ordering = list(sorted(parents_to_folders.keys(), key=len))
 
 
-def _load_image(folder: str):
+def _load_image(button, folder: str):
     svg_path = os.path.join(folder, "loss.svg")
     if not os.path.exists(svg_path):
         # model is still training, find the latest subdirectory
@@ -72,40 +93,77 @@ def _load_image(folder: str):
             svg_path = os.path.join(folder, "step-" + str(stepcount), "loss.svg")
 
     with open(os.path.join(folder, "experiment.json")) as f:
-        json_config = f.read()
+        json_config = json.load(f)["training"]
 
     return [
-        gr.update("img", visible=True, value=svg_path),
-        gr.update("config", visible=True, value=json_config),
+        gr.update(visible=False),
+        gr.update(visible=True),
+        gr.update(visible=True, value=svg_path),
+        gr.update(visible=False, value=json_config),
     ]
-    return os.path.join(folder, "loss.svg")
 
 
-# @with_dataclass(GradientoArgs)
-# def main(args: GradientoArgs):
-# if __name__ == "__main__":
+def _hide_image():
+    return [
+        gr.update(visible=True),
+        gr.update(visible=False),
+        gr.update(visible=False),
+        gr.update(visible=False),
+    ]
+
+
 with gr.Blocks() as demo:
-    gr.Markdown("# Gradiento")
+    gr.Markdown("# Gradiento", elem_classes="centered")
 
-    model_buttons: list[tuple[gr.Button, str]] = []
-    with gr.Row() as row:
-        for group_of_model_folders in more_itertools.distribute(
-            folders_per_row, model_folders
+    for key in key_ordering:
+        gr.Markdown("## " + key[-1])
+
+        for group_of_model_folders in more_itertools.batched(
+            parents_to_folders[key], folders_per_row, strict=False
         ):
-            with gr.Column(scale=1):
-                for model_folder in group_of_model_folders:
-                    model_button = gr.Button(model_folder, variant="huggingface")
-                    model_buttons.append((model_button, model_folder))
+            with gr.Row(equal_height=False):
+                data = []
 
-    gr.Markdown("## Training Details")
-    with gr.Row(equal_height=False) as row:
-        image = gr.Image(visible=False, elem_id="img")
-        config = gr.JSON(visible=False, elem_id="config", height=None, open=True)
-    for model_button, model_folder in model_buttons:
-        model_button.click(
-            _load_image,
-            inputs=[model_button],
-            outputs=[image, config],
-        )
+                for model_folder in group_of_model_folders:
+                    with gr.Column(scale=1):
+                        model_name = model_folder.replace(key[-1], "")
+                        if model_name.startswith("/"):
+                            model_name = model_name[1:]
+                        model_button = gr.Button(model_name, variant="huggingface")
+                        hide_model_button = gr.Button(
+                            model_name, variant="primary", visible=False
+                        )
+                        data.append(
+                            (
+                                model_folder,
+                                model_button,
+                                hide_model_button,
+                            )
+                        )
+            with gr.Row():
+                for model_folder, model_button, hide_model_button in data:
+                    model_image = gr.Image(visible=False)
+                    model_config = gr.JSON(visible=False, open=True)
+
+                    model_button.click(
+                        functools.partial(_load_image, folder=model_folder),
+                        inputs=[model_button],
+                        outputs=[
+                            model_button,
+                            hide_model_button,
+                            model_image,
+                            model_config,
+                        ],
+                    )
+                    hide_model_button.click(
+                        _hide_image,
+                        inputs=[],
+                        outputs=[
+                            model_button,
+                            hide_model_button,
+                            model_image,
+                            model_config,
+                        ],
+                    )
 
 demo.launch(enable_monitoring=True, css=title_css, footer_links=[])
