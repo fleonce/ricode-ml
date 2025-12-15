@@ -136,6 +136,7 @@ def launch(
     screen_pattern: str = "gpu{}",
     master_address: str = "localhost",
     master_port: str = "12345",
+    no_gpu: bool = False,
     # internal argument:
     _help: bool = False,
     _args: list[str] = None,
@@ -173,16 +174,17 @@ def launch(
             )
             rank_zero_dispatch = inside_primary
 
-            from pynvml import nvmlDeviceGetCount
+            if not no_gpu:
+                from pynvml import nvmlDeviceGetCount
 
-            max_gpus = nvmlDeviceGetCount()
+                max_gpus = nvmlDeviceGetCount()
 
-            if len(device_ids) > max_gpus and False:
-                print(
-                    f"Using more gpus ({len(device_ids)}) than available "
-                    f"on this system ({max_gpus})"
-                )
-                return 1
+                if len(device_ids) > max_gpus and False:
+                    print(
+                        f"Using more gpus ({len(device_ids)}) than available "
+                        f"on this system ({max_gpus})"
+                    )
+                    return 1
 
             for rank, device_id in enumerate(device_ids):
                 if rank == 0 and rank_zero_dispatch:
@@ -206,7 +208,18 @@ def launch(
                     ), f"Could not create screen for {device_screen_name}"
 
                 dispatch("export TMOUT=0")
-                if is_distributed:
+                if no_gpu:
+                    if is_distributed:
+                        dispatch(
+                            f"export"
+                            f" WORLD_SIZE={world_size}"
+                            f" RANK={rank}"
+                            f" MASTER_ADDR={master_address}"
+                            f" MASTER_PORT={master_port}"
+                        )
+                    else:
+                        dispatch("export WORLD_SIZE=1 RANK=0")
+                elif is_distributed:
                     dispatch(
                         f"export"
                         f" WORLD_SIZE={world_size}"
@@ -229,7 +242,8 @@ def launch(
             if rank_zero_dispatch:
                 os.environ["RANK"] = "0"
                 os.environ["WORLD_SIZE"] = str(world_size)
-                os.environ["CUDA_LOCAL_DEVICE"] = str(device_ids[0])
+                if not no_gpu:
+                    os.environ["CUDA_LOCAL_DEVICE"] = str(device_ids[0])
                 os.environ["MASTER_ADDR"] = master_address
                 os.environ["MASTER_PORT"] = master_port
                 return _run_proc(command_to_run)
