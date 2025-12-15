@@ -75,6 +75,27 @@ def _distributed_get_cuda_device():
     return False
 
 
+def gloo_distributed_setup():
+    rank = int(os.environ.get("RANK", "0"))
+    world_size = int(os.environ.get("WORLD_SIZE", "1"))
+
+    if dist.is_initialized():
+        return rank, world_size, "cpu"
+
+    if "MASTER_ADDR" not in os.environ:
+        os.environ["MASTER_ADDR"] = "localhost"
+    if "MASTER_PORT" not in os.environ:
+        os.environ["MASTER_PORT"] = "12355"
+
+    dist.init_process_group(
+        "gloo",
+        rank=rank,
+        world_size=world_size,
+        timeout=timedelta(seconds=30),
+    )
+    return rank, world_size, "cpu"
+
+
 def distributed_setup():
     rank = int(os.environ.get("RANK", "0"))
     world_size = int(os.environ.get("WORLD_SIZE", "1"))
