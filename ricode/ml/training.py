@@ -767,6 +767,7 @@ def do_evaluate(
         args.hparams.patience
         and args.best_score
         and best_step + args.hparams.patience < args.train_steps
+        and not new_best_score
     ):
         logger.info(
             f"No improvement for {args.hparams.patience} steps, aborting training after step {args.train_steps}"
