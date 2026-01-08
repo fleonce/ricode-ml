@@ -431,8 +431,16 @@ class BasicDataset(NameableConfig):
 
     def _load_split_data(self, split: str, split_info: SplitInfo):
         file_path = self._split_path(split, split_info)
+        if not file_path.exists():
+            alternative_filepath = Path("..") / self._split_filename(
+                split, split_info, is_final=False
+            )
+            if alternative_filepath.exists():
+                file_path = alternative_filepath
+            else:
+                raise FileNotFoundError()
         if file_path.suffix == ".json":
-            with open(self._split_path(split, split_info)) as f:
+            with open(file_path) as f:
                 return json.load(f)
         elif file_path.suffix == ".jsonl":
 
