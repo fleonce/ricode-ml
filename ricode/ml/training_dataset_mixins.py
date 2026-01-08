@@ -24,10 +24,12 @@ def load_types_info(data_path: str, types_path: str):
     if not file_path.exists():
         alternative_filepath = Path("..") / types_path
         if alternative_filepath.exists():
-            with open(alternative_filepath) as types_f:
-                types_info = json.load(types_f)
+            file_path = alternative_filepath
         else:
             raise FileExistsError
+
+    with open(file_path) as types_f:
+        types_info = json.load(types_f)
 
     info = TypesInfo(
         list(sorted(types_info["entities"].keys())),
