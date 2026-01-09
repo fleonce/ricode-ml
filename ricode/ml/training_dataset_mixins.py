@@ -61,16 +61,23 @@ class TokenizerMixin:
 
     @cached_property
     def tokenizer(self) -> PreTrainedTokenizerBase:
-        return self.__dict__["tokenizer"]
+        tk = self.__dict__.get("tokenizer")
+        if isinstance(tk, PreTrainedTokenizerBase):
+            return tk
+
+        path = self.__dict__.get("_tokenizer_config_path")
+        if path:
+            return self.setup_tokenizer(path)
+        raise AttributeError("Tokenizer wasn't set as path or object")
 
     @tokenizer.setter
     def tokenizer(self, tokenizer: PreTrainedTokenizerBase | str):
         if isinstance(tokenizer, str):
-            self.__dict__["tokenizer"] = self.setup_tokenizer(tokenizer)
-        elif tokenizer is None:
-            raise ValueError("tokenizer is None")
-        else:
+            self.__dict__["_tokenizer_config_path"] = tokenizer
+        elif isinstance(tokenizer, PreTrainedTokenizerBase):
             self.__dict__["tokenizer"] = tokenizer
+        else:
+            raise ValueError("Tokenizer didn't have the expected types")
 
     @cached_property
     def tokenizer_config(self) -> PretrainedConfig:
