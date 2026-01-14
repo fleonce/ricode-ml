@@ -925,9 +925,6 @@ def do_train(
     else:
         model = model_init(config, None)
 
-    if len(dataset.tokenizer) != model.model.get_input_embeddings().num_embeddings:
-        model.model.resize_token_embeddings(len(dataset.tokenizer))
-
     # check if the model contains any uninitialized parameters
     check_parameters_for_nan(model, strict=not allow_nan_parameters)
 
