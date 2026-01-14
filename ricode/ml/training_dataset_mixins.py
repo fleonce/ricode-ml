@@ -22,11 +22,7 @@ from ricode.ml.training_utils import cached_property, map_if_not_none
 def load_types_info(data_path: str, types_path: str):
     file_path = Path(data_path) / types_path
     if not file_path.exists():
-        alternative_filepath = Path("..") / types_path
-        if alternative_filepath.exists():
-            file_path = alternative_filepath
-        else:
-            raise FileExistsError
+        raise FileNotFoundError(file_path)
 
     with open(file_path) as types_f:
         types_info = json.load(types_f)
