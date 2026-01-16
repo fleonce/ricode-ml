@@ -332,7 +332,6 @@ def train_logging(
 
     if num_grad_params < num_params:
         message += f" -- {num_grad_params / 1e6:.4f} M activated params"
-
     logger.info(message)
 
 
@@ -1266,7 +1265,7 @@ def do_train(
                 break
 
     args.done = True
-    energy_info = watcher.wait_until_finish()
+    energy_info = watcher.wait_until_finish() if watcher is not None else None
     if energy_info is not None:
         total_energy = energy_info.train_energy + energy_info.validation_energy
 
