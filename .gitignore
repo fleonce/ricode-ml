@@ -1,14 +1,5 @@
 .idea
+.venv
 __pycache__
-*.safetensors
 *.egg-info
-venv
 build
-datasets
-models
-smac3/logs
-
-# Project specific files
-*.zip
-cfg/ade_split*.json
-cfg/ade/*_split*.json

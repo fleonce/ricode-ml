@@ -1,6 +1,7 @@
 import functools
 import os
 from datetime import timedelta
+from typing import Any
 
 import torch
 import torch.distributed as dist
@@ -9,15 +10,19 @@ import torch.distributed as dist
 def rank_zero_first(func):
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
-        if is_rank_zero():
-            res = func(*args, **kwargs)
-            distributed_barrier()
-        else:
-            distributed_barrier()
-            res = func(*args, **kwargs)
-        return res
+        return rank_zero_ordered(func, True, *args, **kwargs)
 
     return wrapper
+
+
+def rank_zero_ordered(func, first=True, *args, **kwargs) -> Any:
+    if is_rank_zero() ^ (not first):
+        res = func(*args, **kwargs)
+        distributed_barrier()
+    else:
+        distributed_barrier()
+        res = func(*args, **kwargs)
+    return res
 
 
 def is_distributed() -> bool:

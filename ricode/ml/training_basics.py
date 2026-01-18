@@ -5,6 +5,7 @@ import itertools
 import json
 import logging
 import pathlib
+import warnings
 from abc import ABC
 from pathlib import Path
 from typing import (
@@ -37,6 +38,26 @@ except ImportError as ie:
     SummaryWriter = None  # type: ignore
 
 InitializeType = TypeVar("InitializeType")
+
+
+@runtime_checkable
+class ConfProtocol(Protocol):
+    section_name: ClassVar[Optional[str]]
+
+    @staticmethod
+    def from_file(
+        cls: type[InitializeType],
+        name_or_path: str | pathlib.Path,
+        /,
+        setup=False,
+        setup_function_name=None,
+        overrides=None,
+        **init_kwargs,
+    ) -> InitializeType:
+        pass
+
+
+ConfType = TypeVar("ConfType", bound=ConfProtocol)
 
 
 def merge_update(
@@ -207,12 +228,6 @@ def load_config_from_name_or_path(name_or_path: str | Path, recursive: bool = Tr
     return config
 
 
-@runtime_checkable
-class ConfigProtocol(Protocol):
-    section_name: ClassVar[Optional[str]]
-    include_filepath_in_init: ClassVar[bool]
-
-
 def initialize_type_from_config(
     cls: type[InitializeType],
     name_or_path: str | pathlib.Path,
@@ -224,19 +239,11 @@ def initialize_type_from_config(
     raise_if_missing=True,
     **init_kwargs,
 ) -> InitializeType:
-    include_filepath_in_init = None
-    if isinstance(cls, ConfigProtocol):
-        if section_name is None and cls.section_name is not None:
-            section_name = cls.section_name
-        if include_filepath_in_init is None and cls.include_filepath_in_init:
-            include_filepath_in_init = True
-
     kwargs = initialize_kwargs_from_config(
         name_or_path,
         section_name=section_name,
         overrides=overrides,
         raise_if_missing=raise_if_missing,
-        include_filepath_in_init=include_filepath_in_init,
         **init_kwargs,
     )
 
@@ -253,9 +260,9 @@ def initialize_kwargs_from_config(
     section_name=None,
     overrides=None,
     raise_if_missing=True,
-    include_filepath_in_init=False,
+    include_filepath_in_init=None,
     **init_kwargs,
-) -> InitializeType:
+) -> Mapping[str, Any]:
     config = load_config_from_name_or_path(name_or_path)
 
     kwargs = config.get(section_name, None)
@@ -264,7 +271,7 @@ def initialize_kwargs_from_config(
     elif kwargs is None:
         kwargs = {}
     if include_filepath_in_init:
-        kwargs["file_path"] = str(name_or_path)
+        warnings.warn("include_filepath_in_init is deprecated", DeprecationWarning)
 
     # apply overrides specified via config files ("mixins")
     if overrides is not None:
@@ -293,47 +300,65 @@ def format_tensor(values: torch.Tensor):
     return "[" + ", ".join([pad_to_length(fmt % (elem,)) for elem in values]) + "]"
 
 
-class NameableConfig(ABC):
-    section_name: ClassVar[Optional[str]] = None
-    include_filepath_in_init: ClassVar[bool] = False
+class Conf(ABC):
+    r"""
+    Base class for all configuration classes.
+    Provides methods for loading/downloading/saving configurations.
+
+    Class attributes (overridden by derived classes):
+
+    - **section_name** (`str`) -- An identifier under which this object is found in the configuration.
+    """
+
+    section_name: ClassVar[str]
 
     @classmethod
     def from_name(
-        cls: type[InitializeType],
+        cls: type[ConfType],
         name_or_path: str | pathlib.Path,
         /,
-        section_name=None,
         setup=False,
         setup_function_name=None,
         overrides=None,
         **init_kwargs,
-    ) -> InitializeType:
-        return initialize_type_from_config(
+    ) -> ConfType:
+        return cls.from_file(
             cls,
             name_or_path,
-            section_name=section_name,
             setup=setup,
             setup_function_name=setup_function_name,
             overrides=overrides,
             **init_kwargs,
         )
 
-    @classmethod
-    def load_from_name(cls, name: str):
-        assert cls.section_name is not None
-        config_path = cls.find_config(name)
-        with config_path.open() as f:
-            config = json.load(f)
-        if "base" in config:
-            baseconfig = cls.load_from_name(config["base"])
-            config = merge_update(baseconfig, config)
-        return config
+    @staticmethod
+    def from_file(
+        cls: type[ConfType],
+        name_or_path: str | pathlib.Path,
+        /,
+        setup=False,
+        setup_function_name=None,
+        overrides=None,
+        **init_kwargs,
+    ) -> ConfType:
+        return initialize_type_from_config(
+            cls,
+            name_or_path,
+            section_name=cls.section_name,
+            setup=setup,
+            setup_function_name=setup_function_name,
+            overrides=overrides,
+            **init_kwargs,
+        )
+
+
+class NameableConfig(Conf):
+    pass
 
 
 @dataclasses.dataclass(kw_only=True)
 class BasicHparams(NameableConfig):
     section_name = "training"
-    include_filepath_in_init: ClassVar[bool] = False
 
     optimize_for: str = "accuracy"
     patience: int = 0
@@ -451,7 +476,7 @@ class MetricsDict(Generic[M], BasicMetrics):
     def __getattr__(self, item):
         if hasattr(self.first(), item):
             return {key: getattr(value, item) for key, value in self.metrics.items()}
-        return super().__getattribute__(item)  # todo check getattr or getattribute
+        return super().__getattribute__(item)
 
     def to_dict(self):
         dicts = {k: metric.to_dict() for k, metric in self.metrics.items()}

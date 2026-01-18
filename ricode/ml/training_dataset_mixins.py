@@ -1,21 +1,11 @@
 import dataclasses
 import json
 import os
-import warnings
 from pathlib import Path
-from typing import ClassVar, Literal, Mapping, Optional
-
-from safetensors_dataset import SafetensorsDataset
-from tqdm import tqdm
-from transformers import (
-    AutoConfig,
-    AutoTokenizer,
-    PretrainedConfig,
-    PreTrainedTokenizerBase,
-)
+from typing import ClassVar, Literal, Mapping
 
 from ricode.ml.metrics import WordBoundarySpan
-from ricode.ml.training_datasets import BasicDataset, SplitInfo
+from ricode.ml.training_datasets import SplitInfo
 from ricode.ml.training_utils import cached_property, map_if_not_none
 
 
@@ -47,107 +37,6 @@ def load_types_info(data_path: str, types_path: str):
         nest_depth=types_info.get("nest_depth", 1),
     )
     return info
-
-
-class TokenizerMixin:
-    tokenizer_class: ClassVar[PreTrainedTokenizerBase] = AutoTokenizer
-
-    model_max_length: int
-    additional_special_tokens: Optional[list[str]] = None
-
-    @cached_property
-    def tokenizer(self) -> PreTrainedTokenizerBase:
-        tk = self.__dict__.get("tokenizer")
-        if isinstance(tk, PreTrainedTokenizerBase):
-            return tk
-
-        path = self.__dict__.get("_tokenizer_config_path")
-        if path:
-            return self.setup_tokenizer(path)
-        raise AttributeError("Tokenizer wasn't set as path or object")
-
-    @tokenizer.setter
-    def tokenizer(self, tokenizer: PreTrainedTokenizerBase | str):
-        if isinstance(tokenizer, str):
-            self.__dict__["_tokenizer_config_path"] = tokenizer
-        elif isinstance(tokenizer, PreTrainedTokenizerBase):
-            self.__dict__["tokenizer"] = tokenizer
-        else:
-            raise ValueError("Tokenizer didn't have the expected types")
-
-    @cached_property
-    def tokenizer_config(self) -> PretrainedConfig:
-        try:
-            return AutoConfig.from_pretrained(self.tokenizer.name_or_path)
-        except ValueError as cause:
-            warnings.warn(
-                f"Caught {cause} when trying to fetch config for {self.tokenizer.name_or_path}"
-            )
-            raise AttributeError
-
-    @property
-    def max_length(self) -> int:
-        return self.tokenizer.model_max_length
-
-    def setup_tokenizer(
-        self, pretrained_model_name_or_path: str
-    ) -> PreTrainedTokenizerBase:
-        return self.tokenizer_class.from_pretrained(
-            pretrained_model_name_or_path,
-            model_max_length=self.model_max_length,
-            additional_special_tokens=self.additional_special_tokens,
-        )
-
-
-@dataclasses.dataclass(kw_only=True, repr=False)
-class TokenizerDataset(BasicDataset, TokenizerMixin):
-    tokens_key: ClassVar[str] = "tokens"
-    tokenize_kwargs: ClassVar[Optional[dict]] = None
-    do_bulk_tokenize: ClassVar[bool] = False
-
-    model_max_length: int
-    tokenizer: PreTrainedTokenizerBase
-
-    def json_list_setup_examples(
-        self, split: str, split_info: SplitInfo, json: list[dict]
-    ) -> SafetensorsDataset:
-        if self.do_bulk_tokenize:
-            tokens_list = list()
-            is_split_into_words = False
-            is_generator = not isinstance(json, list)
-            elements = list()
-            for elem in tqdm(json, leave=True):
-                if is_generator:
-                    elements.append(elem)
-                tokens = elem[self.tokens_key]
-                if not isinstance(tokens, (str, list)):
-                    raise ValueError(
-                        f"tokens must be a str or list, got {type(tokens)}"
-                    )
-                tokens_list.append(tokens)
-                if not is_split_into_words and isinstance(tokens, list):
-                    is_split_into_words = True
-            if is_generator:
-                json = elements
-
-            tokenize_kwargs = self.tokenize_kwargs or dict()
-            batch_encoding = self.tokenizer(
-                tokens_list, is_split_into_words=is_split_into_words, **tokenize_kwargs
-            )
-
-            for pos, elem in enumerate(tqdm(json, leave=True)):
-                for key, value in batch_encoding.items():
-                    if key in elem:
-                        raise ValueError(
-                            f"elements of loaded dataset cannot define {key}: {elem.keys()}"
-                        )
-                    elem[key] = value[pos]
-                if (
-                    "return_offsets_mapping" in tokenize_kwargs
-                    and tokenize_kwargs["return_offsets_mapping"]
-                ):
-                    elem["word_ids"] = batch_encoding.word_ids(pos)
-        return super().json_list_setup_examples(split, split_info, json)
 
 
 class ContaminatedMixin:
