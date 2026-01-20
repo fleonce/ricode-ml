@@ -9,9 +9,10 @@ from torcheval.metrics import Mean
 from torcheval.metrics.toolkit import sync_and_compute
 
 from ricode.ml._training.watcher import watcher_tqdm
+from ricode.ml.datasets.proxy import ProxyTrainingArgs
 from ricode.ml.distributed import distributed_world_size
 from ricode.ml.training_basics import BasicMetrics, MetricsDict
-from ricode.ml.training_datasets import BasicDataset, ProxyTrainingArgs
+from ricode.ml.training_datasets import BasicDataset
 from ricode.ml.training_types import (
     DataLoaderProtocol,
     EvaluateProtocol,

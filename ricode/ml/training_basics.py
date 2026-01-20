@@ -327,24 +327,26 @@ class Conf(ABC):
             name_or_path,
             setup=setup,
             setup_function_name=setup_function_name,
+            section_name=cls.section_name,
             overrides=overrides,
             **init_kwargs,
         )
 
     @staticmethod
     def from_file(
-        cls: type[ConfType],
+        cls: type[InitializeType],
         name_or_path: str | pathlib.Path,
+        section_name=None,
         /,
         setup=False,
         setup_function_name=None,
         overrides=None,
         **init_kwargs,
-    ) -> ConfType:
+    ) -> InitializeType:
         return initialize_type_from_config(
             cls,
             name_or_path,
-            section_name=cls.section_name,
+            section_name=section_name,
             setup=setup,
             setup_function_name=setup_function_name,
             overrides=overrides,
