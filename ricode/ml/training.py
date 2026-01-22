@@ -1439,11 +1439,17 @@ def save_loss_plot(
         torch.tensor(args.score_history["_norm"]).cpu().unbind(dim=1)
     )
 
+    def _stack_orelse(v):
+        try:
+            return torch.stack(v, dim=-1).cpu()
+        except TypeError:
+            return torch.tensor(v).cpu()
+
     score_history = {
         key: (
             torch.tensor(value).cpu()
             if not isinstance(first(value), torch.Tensor)
-            else torch.stack(value, dim=-1).cpu()
+            else _stack_orelse(value)
         )
         for key, value in args.score_history.items()
         # if key in (args.scores_to_track | {"_steps"})
