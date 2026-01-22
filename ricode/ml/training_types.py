@@ -312,6 +312,18 @@ class ForwardBackwardProtocol(Protocol[TModel, THparams, TDataset]):
     ) -> Union[torch.Tensor, MutableMapping[str, torch.Tensor]]: ...
 
 
+@runtime_checkable
+class OptimizerStepProtocol(Protocol[TModel]):
+    def __call__(
+        self,
+        model: TModel,
+        optimizer: torch.optim.Optimizer,
+        lr_scheduler: torch.optim.lr_scheduler.LRScheduler,
+    ) -> torch.Tensor:
+        # should return the norm of the gradients
+        pass
+
+
 _U = TypeVar("_U")
 _V = TypeVar("_V")
 _W_cov = TypeVar("_W_cov", covariant=True)

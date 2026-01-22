@@ -90,6 +90,7 @@ from ricode.ml.training_types import (
     Hooks,
     ModelInitProtocol,
     OptimizerInitProtocol,
+    OptimizerStepProtocol,
     StepBasedTraining,
     TrainingArgs,
 )
@@ -474,7 +475,7 @@ def train_step(
     model: TModel,
     optimizer: Optimizer,
     lr_scheduler: LRScheduler,
-):
+) -> torch.Tensor:
     norm = torch.nn.utils.clip_grad_norm_(
         model.parameters(), 1, error_if_nonfinite=False
     )
@@ -788,6 +789,7 @@ def do_train(
     dataloader_fn: DataLoaderProtocol[TDataset, THparams],
     config_init_fn: ConfigInitProtocol[TDataset, THparams, TConfig] | None = None,
     step_fn: ForwardBackwardProtocol[TModel, THparams, TDataset] = forward_backward,
+    optimizer_step_fn: OptimizerStepProtocol[TModel] = train_step,
     transformer: Optional[str] = None,
     model_path: Optional[str] = None,
     log_file: Optional[Path] = None,
@@ -1099,7 +1101,7 @@ def do_train(
                 if args.grad_steps >= hparams.gradient_accumulation:
 
                     # (7) call the optimizer and update the lr scheduler
-                    norm = train_step(model, optimizer, lr_scheduler).detach()
+                    norm = optimizer_step_fn(model, optimizer, lr_scheduler).detach()
                     if check_nan_grad_norm and (
                         norm.isinf() or norm.isnan() or norm.isneginf()
                     ):
