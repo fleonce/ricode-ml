@@ -317,7 +317,7 @@ def train_logging(
 
     logger.info(args.hparams.to_json())
     if load_ckpt is not None:
-        logger.info(f"Loaded model from {load_ckpt.as_posix()}")
+        logger.info(f"Loaded model from {str(load_ckpt)}")
 
     num_params = num_parameters(model)
     num_bytes = estimated_model_size(model)
@@ -407,13 +407,16 @@ def load_checkpoint(
     optimizer: Optimizer,
     lr_scheduler: LRScheduler,
     generator: Generator,
-    model_ckpt: Path,
+    model_ckpt: Path | str,
     load_optimizer_ckpt: bool,
     steps_per_epoch: int,
 ) -> tuple[int, int, Optional[tuple[int, int | float]]]:
     """
     Load the optimizer state and return the training epoch to start at
     """
+    if not isinstance(model_ckpt, Path):
+        model_ckpt = Path(model_ckpt)
+
     optimizer_state = model_ckpt / "optimizer.bin"
     if not optimizer_state.exists():
         warnings.warn(f"Cannot load optimizer state from {optimizer_state}")
@@ -804,7 +807,7 @@ def do_train(
     num_epochs: int = 0,
     dont_ckpt: bool = False,
     do_profile: bool = False,
-    load_ckpt: Optional[Path] = None,
+    load_ckpt: Optional[Path | str] = None,
     load_optimizer_ckpt: Optional[bool] = True,
     track_metrics: Optional[set[str]] = None,
     track_title: Optional[str] = None,
