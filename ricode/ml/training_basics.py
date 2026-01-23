@@ -5,6 +5,7 @@ import itertools
 import json
 import logging
 import pathlib
+import re
 import warnings
 from abc import ABC
 from pathlib import Path
@@ -38,6 +39,14 @@ except ImportError as ie:
     SummaryWriter = None  # type: ignore
 
 InitializeType = TypeVar("InitializeType")
+
+
+PARSE_FUNCTIONS = {
+    "str": str,
+    "string": str,
+    "float": float,
+    "int": int,
+}
 
 
 @runtime_checkable
@@ -212,20 +221,62 @@ def find_config_path(name_or_path: str | Path) -> Path:
     elif local_path.exists():
         return local_path
     else:
-        raise ValueError(
+        raise FileNotFoundError(
             f"Cannot find config '{name_or_path}' as a path or as a local config ({local_path.as_posix()})"
         )
 
 
 def load_config_from_name_or_path(name_or_path: str | Path, recursive: bool = True):
-    config_path = find_config_path(name_or_path)
-    with config_path.open() as f:
-        config = json.load(f)
+    try:
+        config_path = find_config_path(name_or_path)
+        with config_path.open() as f:
+            config = json.load(f)
 
-    if "base" in config and recursive:
-        baseconfig = load_config_from_name_or_path(config["base"], recursive)
-        config = merge_update(baseconfig, config)
-    return config
+        if "base" in config and recursive:
+            baseconfig = load_config_from_name_or_path(config["base"], recursive)
+            config = merge_update(baseconfig, config)
+        return config
+    except FileNotFoundError as error:
+        if "=" not in name_or_path:
+            raise
+        args = name_or_path.split("=")
+        if len(args) != 2:
+            raise ValueError(
+                f'Cannot parse literal config {name_or_path!r}, missing "=" key-value separator'
+            ) from error
+        key, value = args
+        if not re.match(r"[a-zA-Z0-9]+(\.[a-zA-Z0-9])*", key):
+            raise ValueError(
+                f"Cannot parse literal key {key!r}, invalid format"
+            ) from error
+
+        # now that the key is verified, parse value
+        # problem is, value could be a string, int, float, ...
+        # so, why not prepend the value type as a string
+        # á la float:3e-5, int:42, str:literal
+        if ":" not in value:
+            raise ValueError(
+                f"Cannot parse literal value {value!r}, invalid format. Expecting {{type}}:value format"
+            ) from error
+
+        typ, value = value.split(":", 1)
+        if typ not in PARSE_FUNCTIONS:
+            raise ValueError(
+                f"Invalid type {typ!r}, accepted types are {set(PARSE_FUNCTIONS.keys())!r}"
+            ) from error
+
+        try:
+            parsed_value = PARSE_FUNCTIONS[typ](value)
+        except ValueError as value_error:
+            raise ValueError(f"Failed to parse {value!r} as a {typ!r}") from value_error
+        # value is parsed, key is verified, build a config!
+        keys = key.split(".")
+        config = {}
+        current = config
+        for key in keys[:-1]:
+            current[key] = current = {}
+        current[keys[-1]] = parsed_value
+        return config
 
 
 def initialize_type_from_config(
