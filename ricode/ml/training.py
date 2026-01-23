@@ -315,7 +315,7 @@ def train_logging(
     # print dataset info
     logger.info(repr(args.dataset))
 
-    logger.info(args.hparams.to_json())
+    logger.info("Hyperparameters: " + args.hparams.to_json())
     if load_ckpt is not None:
         logger.info(f"Loaded model from {str(load_ckpt)}")
 

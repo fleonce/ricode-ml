@@ -24,6 +24,8 @@ from typing import (
     TypeVar,
 )
 
+import attr
+import attrs
 import torch
 import typing_extensions
 from more_itertools.more import first
@@ -409,7 +411,7 @@ class NameableConfig(Conf):
     pass
 
 
-@dataclasses.dataclass(kw_only=True)
+@attrs.define(kw_only=True)
 class BasicHparams(NameableConfig):
     section_name = "training"
 
@@ -419,7 +421,20 @@ class BasicHparams(NameableConfig):
     gradient_accumulation: int = 1
 
     def to_json(self):
-        return json.dumps(self.__dict__, indent=2)
+        dict_to_jsonify = self.__dict__
+        target = {}
+        for key, value in dict_to_jsonify.items():
+            if attr.has(type(value)):
+                tgt = {}
+                for attrib in attrs.fields_dict(type(value)).keys():
+                    tgt[attrib] = getattr(value, attrib)
+                target[key] = tgt
+            elif dataclasses.is_dataclass(type(value)):
+                target[key] = value.__dict__
+            else:
+                target[key] = value
+
+        return json.dumps(target, indent=2)
 
 
 def _keys_match(metric: str, key: str):
