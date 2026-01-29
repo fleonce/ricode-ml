@@ -13,18 +13,28 @@ import warnings
 from collections import defaultdict, OrderedDict
 from dataclasses import dataclass
 from functools import total_ordering
-from json import dumps, load
+from json import load
 from logging import StreamHandler
 from pathlib import Path
 from time import sleep
-from typing import Generator, Literal, Optional, Sequence, TextIO
+from typing import (
+    Any,
+    Generator,
+    Generic,
+    Literal,
+    Optional,
+    Protocol,
+    runtime_checkable,
+    Sequence,
+    TextIO,
+    TypeVar,
+)
 
-import torch
-
+import attrs
 import typing_extensions
-from torch import Tensor
-
 from with_argparse import with_dataclass
+
+from ricode.ml.training_types import AttrsClass
 
 
 @dataclass
@@ -153,58 +163,36 @@ def cleanup_datasets(datasets: list[str]):
     )
 
 
-class ExperimentWatcher:
+@runtime_checkable
+class ExperimentProtocol(Protocol):
+    pass
+
+
+TExperimentConfig = TypeVar("TExperimentConfig", bound=OrderedDict[str, Any])
+TExperiment = TypeVar("TExperiment", bound=AttrsClass)
+
+
+@attrs.define
+class ExperimentWatcher(Generic[TExperimentConfig]):
     experiment_dir: Path
-    failed_experiments: set[ExperimentInfo]
+    experiment: TExperiment = attrs.field()
 
-    def __init__(
-        self,
-        experiment_dir: Path,
-        models: list[str],
-        datasets: list[str],
-        seeds: list[int],
-        architectures: Sequence[str],
-        gpus_per_job: int,
-        seed_offset: int,
-        logger: logging.Logger,
-        main_log_file: StreamHandler[TextIO],
-        use_bfloat16: bool,
-        use_fsdp: bool,
-        use_seed_as_dataset: bool,
-        load_ckpt: Optional[Path],
-        summary_only: bool,
-        optimize_for: str,  # f1
-        work_dir: Path,
-        cleanup_status_dir: bool,
-    ):
-        self.experiment_dir = experiment_dir
-        self.gpus_per_job = gpus_per_job
-        self.original_seeds = seeds
-        self.seed_offset = seed_offset
+    @experiment.validator
+    def _experiment_validator(self, attrib, value):
+        if not attrs.has(type(value)):
+            raise ValueError(
+                f"{attrib.name} must ba a attrs-defined type, got {value!r}"
+            )
 
-        self.models = models
-        self.datasets = cleanup_datasets(datasets)
-        self.architectures = architectures
+    logger: logging.Logger
+    config_type: type[TExperimentConfig] = attrs.field(default=OrderedDict)
+    gpus_per_job: int = attrs.field(default=1)
+    optimize_for: Optional[bool] = attrs.field(default=None)
+    cleanup_status_dir: bool = attrs.field(default=False)
 
-        self.failed_experiments = set()
-        self.stop_iteration = False
-        self.summary_only = summary_only
-
-        self.logger = logger
-        self.main_log_file = main_log_file
-
-        self.use_bfloat16 = use_bfloat16
-        self.use_fsdp = use_fsdp
-        self.use_seed_as_dataset = use_seed_as_dataset
-        self.load_ckpt = load_ckpt
-        self.cleanup_status_dir = cleanup_status_dir
-
-        self.optimize_for = optimize_for
-
-        self.work_dir = work_dir
-        self.experiment_dir.mkdir(parents=True, exist_ok=True)
-        self.status_dir.mkdir(parents=True, exist_ok=True)
-        self.logging_dir.mkdir(parents=True, exist_ok=True)
+    # non-init fields
+    failed_experiments: list[TExperimentConfig] = attrs.field(init=False, factory=list)
+    stop_iteration: bool = attrs.field(default=False, init=False)
 
     @property
     def status_dir(self) -> Path:
@@ -214,43 +202,40 @@ class ExperimentWatcher:
     def logging_dir(self) -> Path:
         return self.experiment_dir / ".logs"
 
-    @property
-    def seeds(self) -> list[int]:
-        return list(map(lambda x: x + self.seed_offset, self.original_seeds))
+    def compute_run_info(self) -> Generator[TExperimentConfig, None, None]:
+        field_keys = list(attrs.fields_dict(type(self.experiment)).keys())
+        field_values = []
+        for field_name in field_keys:
+            value = getattr(self.experiment, field_name)
+            if not isinstance(value, Sequence):
+                raise ValueError(
+                    f"Field {field_name} must be a Sequence, got {value!r}"
+                )
+            field_values.append(value)
 
-    def compute_run_info(self) -> Generator[ExperimentInfo, None, None]:
-        for model, dataset, seed, architecture in itertools.product(
-            self.models, self.datasets, self.seeds, self.architectures
-        ):
-            yield ExperimentInfo(model, dataset, seed, architecture)
+        for args in itertools.product(*field_values):
+            config_instance = self.config_type()
+            for pos, field_name in enumerate(field_keys):
+                config_instance[field_name] = args[pos]
+            yield config_instance
 
-    @staticmethod
-    def get_experiment_dir(info: ExperimentInfo, base_dir: Path):
-        if (base_dir / info.model).exists():
-            return base_dir / info.model  # legacy support
-
+    def get_experiment_dir(self, info: TExperimentConfig, base_dir: Path):
         def cleanup_name(inp: str) -> str:
-            if "_split" in inp:
-                inp = inp.split("_split")[0]
             return inp.replace("/", "_")
 
-        return (
-            base_dir
-            / info.architecture
-            / cleanup_name(info.dataset)
-            / cleanup_name(info.model)
-        )
+        base_path = base_dir
+        for key, value in info.items():
+            base_path = base_path / f"{cleanup_name(key)}__{cleanup_name(value)}"
 
-    def get_runtime_dir(self, info: ExperimentInfo):
+        return base_path
+
+    def get_runtime_dir(self, info: TExperimentConfig):
         return self.get_experiment_dir(info, self.experiment_dir)
 
-    def get_experiment_state(self, info: ExperimentInfo):
-        experiment_run_file = self.get_experiment_dir(
-            info, self.status_dir
-        ) / self.get_run_name(info, False)
-        experiment_done_file = self.get_experiment_dir(
-            info, self.status_dir
-        ) / self.get_run_name(info, True)
+    def get_experiment_state(self, info: TExperimentConfig):
+        experiment_dir = self.get_experiment_dir(info, self.status_dir)
+        experiment_run_file = experiment_dir / self.get_run_name(info, False)
+        experiment_done_file = experiment_dir / self.get_run_name(info, True)
 
         if info in self.failed_experiments:
             # if we failed before, don't try again
@@ -265,16 +250,15 @@ class ExperimentWatcher:
 
     def missing_runs(
         self: "ExperimentWatcher",
-    ) -> Generator[ExperimentInfo, None, None]:
+    ) -> Generator[OrderedDict[str, Any], None, None]:
         for experiment in self.compute_run_info():
             experiment_state = self.get_experiment_state(experiment)
             if experiment_state == ExperimentStatus.STATUS_NOT_STARTED:
                 yield experiment
 
+    # @deprecated
     def summary(self):
         metrics = defaultdict(lambda: defaultdict(list))
-        bound_metrics = defaultdict(lambda: defaultdict(list))
-        num_runs = len(self.seeds)
 
         skip_model_dataset_arch = set()
         for experiment in self.compute_run_info():
@@ -283,91 +267,26 @@ class ExperimentWatcher:
             ) / self.get_run_name(experiment)
             experiment_metrics = experiment_dir / "metrics.json"
             if not experiment_metrics.exists():
-                skip_model_dataset_arch.add(
-                    (experiment.architecture, experiment.model, experiment.dataset)
+                self.logger.warning(
+                    f"Experiment {experiment!r} did not produce a metrics.json"
                 )
                 continue
 
-            experiment_key = (
-                experiment.dataset,
-                experiment.architecture,
-                experiment.model,
-            )
             with experiment_metrics.open() as f:
                 json_blob = load(f)
 
-                for k, v in json_blob["test_metrics"].items():
-                    metrics[experiment_key][k].append(v)
-                if "test_metrics_bounds" in json_blob:
-                    for k, v in json_blob["test_metrics_bounds"].items():
-                        bound_metrics[experiment_key][k].append(v)
-
-        def compute_std_mean_best(
-            vals: Tensor, best_run: int
-        ) -> tuple[float, float, float]:
-            vals = vals.squeeze()
-            if not vals.is_floating_point():
-                vals = vals.to(torch.float64)
-            if vals.numel() == 0:
-                return 0.0, 0.0, 0.0
-            if vals.dim() == 0:  # single element received as input
-                return 0.0, vals.item(), vals.item()
-            std_mean = torch.std_mean(vals)
-            return std_mean[0].item(), std_mean[1].item(), vals[best_run].item()
-
-        for (dataset, architecture, model), experiment_metrics in metrics.items():
-            if any(len(v) < num_runs for k, v in experiment_metrics.items()):
-                self.logger.info(
-                    f"Skipping model '{model}' because metrics files are not available"
-                )
-                continue
-            experiment_metrics = OrderedDict(
-                {k: torch.tensor(v) for k, v in experiment_metrics.items()}
-            )
-            experiment_bound_metrics = bound_metrics[(dataset, architecture, model)]
-            experiment_bound_metrics = OrderedDict(
-                {k: torch.tensor(v) for k, v in experiment_bound_metrics.items()}
-            )
-
-            best_performing_run = experiment_metrics[self.optimize_for].argmax().item()
-
-            result_metrics = OrderedDict()
-            for k, v in experiment_metrics.items():
-                v = v.squeeze()
-                if not v.dtype.is_floating_point:
-                    v = v.to(torch.float)
-                bound = (
-                    0.0,
-                    0.0,
-                    0.0,
-                )
-                if k in experiment_bound_metrics:
-                    bound = compute_std_mean_best(
-                        experiment_bound_metrics[k], best_performing_run
-                    )
-                strict = compute_std_mean_best(v, best_performing_run)
-
-                result_metrics[k] = strict + bound
-
-            for k, v in result_metrics.copy().items():
-                std_dev, mean, maximum, bound_std, bound_mean, bound_maximum = v
-                del result_metrics[k]
-                result_metrics[k.lower()] = (
-                    f"{mean:.6f} ± {std_dev:.4f} / {bound_mean:.6f} ± {bound_std:.4f} "
-                    f"(best is {maximum:.6f} / {bound_maximum:.6f})"
+                value = (
+                    json_blob["test_metrics"][self.optimize_for]
+                    if self.optimize_for
+                    else json_blob["test_metrics"]
                 )
 
-            self.logger.info(
-                f"Model '{model}' results with {len(self.seeds)} runs (best w.r.t {self.optimize_for} "
-                f"was {self.get_run_name_by_id(best_performing_run)} out of "
-                f"{', '.join(f'{v:.6f}' for v in experiment_metrics[self.optimize_for].tolist())})"
-            )
-            self.logger.info(dumps(result_metrics, indent=2, ensure_ascii=False))
+                if self.optimize_for:
+                    self.logger.info(f"{experiment!r}: {value:.8f}")
+                else:
+                    self.logger.info(f"{experiment!r}: {value!r}")
 
     def run(self):
-        if self.summary_only:
-            return
-
         experiment_lock = self.experiment_dir / ".lock"
         if not self.is_rank_zero():
             while not experiment_lock.exists():
@@ -405,6 +324,10 @@ class ExperimentWatcher:
             )
 
     def __enter__(self) -> typing_extensions.Self:
+        self.experiment_dir.mkdir(parents=True, exist_ok=True)
+        self.status_dir.mkdir(parents=True, exist_ok=True)
+        self.logging_dir.mkdir(parents=True, exist_ok=True)
+
         removed = 0
         for info in self.compute_run_info():
             state = self.get_experiment_state(info)
@@ -444,8 +367,7 @@ class ExperimentWatcher:
     def is_local_rank_zero(cls):
         return (cls.rank() % cls.world_size()) == 0
 
-    def run_experiment(self, info: ExperimentInfo) -> bool:
-        experiment_name = f"{info.seed}"
+    def run_experiment(self, info: TExperimentConfig) -> bool:
         experiment_status_dir = self.get_experiment_dir(info, self.status_dir)
         experiment_status_dir.mkdir(parents=True, exist_ok=True)
         experiment_run_file = experiment_status_dir / self.get_run_name(info, False)
@@ -457,7 +379,7 @@ class ExperimentWatcher:
 
         experiment_log_dir = self.get_experiment_dir(info, self.logging_dir)
         experiment_log_dir.mkdir(parents=True, exist_ok=True)
-        experiment_log_file = experiment_log_dir / (experiment_name + ".log")
+        experiment_log_file = experiment_log_dir / "experiment.log"
         if not self.is_rank_zero():
             while not experiment_run_file.exists():
                 self.logger.info(
@@ -466,10 +388,7 @@ class ExperimentWatcher:
                 sleep(10)
 
             experiment_log_file = experiment_run_file.with_name(
-                experiment_log_file.name
-                + "_rank"
-                + os.environ.get("RANK", "0")
-                + ".log"
+                experiment_log_file.name + "_rank" + str(self.rank()) + ".log"
             )
         else:
             experiment_run_file.touch(exist_ok=True)
@@ -487,9 +406,16 @@ class ExperimentWatcher:
             with open(experiment_log_file, "w") as log_file:
                 output = run_subprocess_into_file(
                     args,
-                    logfiles=[log_file, self.main_log_file.stream],
+                    logfiles=[
+                        log_file,
+                        *[
+                            getattr(handler, "stream")
+                            for handler in self.logger.handlers
+                            if hasattr(handler, "stream")
+                        ],
+                    ],
                     stderr=subprocess.STDOUT,
-                    cwd=experiment_dir,
+                    cwd=os.getcwd(),
                 )
                 if output.returncode == 0 and self.is_rank_zero():
                     experiment_done_file.touch(exist_ok=True)
@@ -499,9 +425,9 @@ class ExperimentWatcher:
                         sleep(10)
                 else:
                     self.delete_run_file(experiment_run_file)
-                    self.failed_experiments.add(info)
+                    self.failed_experiments.append(info)
                 self.logger.info(
-                    f"Process {info.dataset}/{info.architecture}/{info.model}/{self.get_run_name(info)} produced return code {output.returncode}"
+                    f"Process {info!r} produced return code {output.returncode}"
                 )
                 return output.returncode == 0
         except KeyboardInterrupt:
@@ -511,7 +437,7 @@ class ExperimentWatcher:
             sleep(3)
             raise
 
-    def delete_run(self, info: ExperimentInfo):
+    def delete_run(self, info: TExperimentConfig):
         experiment_run_file = self.get_experiment_dir(
             info, self.status_dir
         ) / self.get_run_name(info, False)
@@ -530,50 +456,14 @@ class ExperimentWatcher:
             except FileNotFoundError:
                 self.logger.warning(f"Could not remove file {filepath}")
 
-    def get_iter_run_args(self, info: ExperimentInfo):
-        args = [
-            "python3",
-            (self.work_dir / "train.py").as_posix(),
-            "--transformer",
-            info.model,
-            "--config",
-            (
-                info.dataset
-                if not self.use_seed_as_dataset
-                else info.dataset + "_split" + str(info.seed)
-            ),
-            "--no_tqdm",
-            "--verbose",
-        ]
-        if not self.use_bfloat16:
-            args.append("--use_float32")
-        if self.use_fsdp:
-            args.append("--use_fsdp")
-        args.append("--seed")
-        args.append(str(info.seed))
-        if self.load_ckpt:
-            args.extend(["--load_checkpoint", self.load_ckpt.as_posix()])
-        args.append("--model_path")
-        args.append(
-            (self.get_runtime_dir(info) / self.get_run_name(info, False)).as_posix()
-        )
-        return args
-
     @staticmethod
-    def get_run_name(info: ExperimentInfo, completed: bool = False):
-        return f"{info.seed:04d}" + ("_done" if completed else "")
+    def get_run_name(info: TExperimentConfig, completed: bool = False):
+        if completed:
+            return "run_done"
+        return "running"
 
-    @staticmethod
-    def get_run_name_by_id(run_id: int):
-        return f"{run_id:04d}"
-
-    def get_run_args(self, info: ExperimentInfo):
-        if info.architecture == "iter":
-            return self.get_iter_run_args(info)
-        elif hasattr(self, method_name := "get_" + info.architecture + "_run_args"):
-            return getattr(self, method_name)(info)
-        else:
-            raise NotImplementedError(info.architecture)
+    def get_run_args(self, info: TExperimentConfig):
+        raise NotImplementedError(info)
 
 
 def run_subprocess_into_file(
