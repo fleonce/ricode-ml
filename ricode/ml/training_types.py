@@ -132,6 +132,11 @@ class SupportsGetItemDataclass(DataclassInstance):
 
 
 @runtime_checkable
+class AttrsClass(Protocol):
+    __attrs_attrs__: Any
+
+
+@runtime_checkable
 class StepBasedTraining(Protocol):
     num_steps: int
     eval_every_n_steps: int
