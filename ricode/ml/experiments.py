@@ -233,9 +233,9 @@ class ExperimentWatcher(Generic[TExperimentConfig]):
         return self.get_experiment_dir(info, self.experiment_dir)
 
     def get_experiment_state(self, info: TExperimentConfig):
-        experiment_dir = self.get_experiment_dir(info, self.status_dir)
-        experiment_run_file = experiment_dir / self.get_run_name(info, False)
-        experiment_done_file = experiment_dir / self.get_run_name(info, True)
+        status_dir = self.get_experiment_dir(info, self.status_dir)
+        experiment_run_file = status_dir / self.get_status_filename(info, False)
+        experiment_done_file = status_dir / self.get_status_filename(info, True)
 
         if info in self.failed_experiments:
             # if we failed before, don't try again
@@ -262,9 +262,7 @@ class ExperimentWatcher(Generic[TExperimentConfig]):
 
         skip_model_dataset_arch = set()
         for experiment in self.compute_run_info():
-            experiment_dir = self.get_experiment_dir(
-                experiment, self.experiment_dir
-            ) / self.get_run_name(experiment)
+            experiment_dir = self.get_experiment_dir(experiment, self.experiment_dir)
             experiment_metrics = experiment_dir / "metrics.json"
             if not experiment_metrics.exists():
                 self.logger.warning(
@@ -337,7 +335,7 @@ class ExperimentWatcher(Generic[TExperimentConfig]):
                         self.logger.info("Performing cleanup ...")
                     run_file = self.get_experiment_dir(
                         info, self.status_dir
-                    ) / self.get_run_name(info, False)
+                    ) / self.get_status_filename(info, False)
                     self.logger.info("\t" + run_file.as_posix())
                     os.remove(run_file)
                 else:
@@ -368,10 +366,10 @@ class ExperimentWatcher(Generic[TExperimentConfig]):
         return (cls.rank() % cls.world_size()) == 0
 
     def run_experiment(self, info: TExperimentConfig) -> bool:
-        experiment_status_dir = self.get_experiment_dir(info, self.status_dir)
-        experiment_status_dir.mkdir(parents=True, exist_ok=True)
-        experiment_run_file = experiment_status_dir / self.get_run_name(info, False)
-        experiment_done_file = experiment_status_dir / self.get_run_name(info, True)
+        status_dir = self.get_experiment_dir(info, self.status_dir)
+        status_dir.mkdir(parents=True, exist_ok=True)
+        experiment_run_file = status_dir / self.get_status_filename(info, False)
+        experiment_done_file = status_dir / self.get_status_filename(info, True)
 
         if experiment_done_file.exists():
             warnings.warn("Attempted to run completed experiment ...")
@@ -396,9 +394,7 @@ class ExperimentWatcher(Generic[TExperimentConfig]):
                 f"Created run status file {experiment_run_file.as_posix()}"
             )
 
-        experiment_dir = self.get_experiment_dir(
-            info, self.experiment_dir
-        ) / self.get_run_name(info)
+        experiment_dir = self.get_experiment_dir(info, self.experiment_dir)
         experiment_dir.mkdir(parents=True, exist_ok=True)
         args = self.get_run_args(info)
         self.logger.info(f"Run args = {' '.join(args)}")
@@ -440,10 +436,10 @@ class ExperimentWatcher(Generic[TExperimentConfig]):
     def delete_run(self, info: TExperimentConfig):
         experiment_run_file = self.get_experiment_dir(
             info, self.status_dir
-        ) / self.get_run_name(info, False)
+        ) / self.get_status_filename(info, False)
         experiment_done_file = self.get_experiment_dir(
             info, self.status_dir
-        ) / self.get_run_name(info, True)
+        ) / self.get_status_filename(info, True)
 
         self.delete_run_file(experiment_run_file)
         self.delete_run_file(experiment_done_file)
@@ -457,9 +453,9 @@ class ExperimentWatcher(Generic[TExperimentConfig]):
                 self.logger.warning(f"Could not remove file {filepath}")
 
     @staticmethod
-    def get_run_name(info: TExperimentConfig, completed: bool = False):
+    def get_status_filename(info: TExperimentConfig, completed: bool = False):
         if completed:
-            return "run_done"
+            return "completed"
         return "running"
 
     def get_run_args(self, info: TExperimentConfig):
