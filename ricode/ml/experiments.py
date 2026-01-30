@@ -2,6 +2,7 @@
 import dataclasses
 import enum
 import itertools
+import json
 import logging
 import os
 import subprocess
@@ -22,6 +23,7 @@ from typing import (
     Generator,
     Generic,
     Literal,
+    Mapping,
     Optional,
     Protocol,
     runtime_checkable,
@@ -266,7 +268,7 @@ class ExperimentWatcher(Generic[TExperimentConfig]):
             experiment_metrics = experiment_dir / "metrics.json"
             if not experiment_metrics.exists():
                 self.logger.warning(
-                    f"Experiment {experiment!r} did not produce a metrics.json"
+                    f"Experiment {self._prettify_info(experiment, slim=True)} did not produce a metrics.json"
                 )
                 continue
 
@@ -280,9 +282,17 @@ class ExperimentWatcher(Generic[TExperimentConfig]):
                 )
 
                 if self.optimize_for:
-                    self.logger.info(f"{experiment!r}: {value:.8f}")
+                    self.logger.info(
+                        f"{self._prettify_info(experiment, slim=True)}: {value:.8f}"
+                    )
                 else:
-                    self.logger.info(f"{experiment!r}: {value!r}")
+                    self.logger.info(
+                        f"{self._prettify_info(experiment, slim=True)}: {value!r}"
+                    )
+
+    @classmethod
+    def _prettify_info(cls, info: Mapping[str, Any], slim=False):
+        return json.dumps(info, indent=None if slim else 2)
 
     def run(self):
         experiment_lock = self.experiment_dir / ".lock"
@@ -297,7 +307,7 @@ class ExperimentWatcher(Generic[TExperimentConfig]):
         ) is not None and not self.stop_iteration:
             successful = False
             try:
-                self.logger.info(f"Starting experiment {info}")
+                self.logger.info(f"Starting experiment {self._prettify_info(info)}")
                 successful = self.run_experiment(info)
             except KeyboardInterrupt:
                 self.delete_run(info)
@@ -306,7 +316,9 @@ class ExperimentWatcher(Generic[TExperimentConfig]):
                 sleep(1)
             except Exception:
                 self.delete_run(info)
-                self.logger.info(f"Caught exception when running model {info}")
+                self.logger.info(
+                    f"Caught exception when running model {self._prettify_info(info)}"
+                )
                 self.logger.warning(traceback.format_exc())
                 sleep(1)
 
