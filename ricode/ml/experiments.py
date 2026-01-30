@@ -296,7 +296,7 @@ class ExperimentWatcher(Generic[TExperimentConfig]):
 
     def run(self):
         experiment_lock = self.experiment_dir / ".lock"
-        if not self.is_rank_zero():
+        if not self.is_rank_zero() and self.gpus_per_job > 1:
             while not experiment_lock.exists():
                 self.logger.info("Waiting for main process startup")
         else:
@@ -358,7 +358,7 @@ class ExperimentWatcher(Generic[TExperimentConfig]):
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         experiment_lock = self.experiment_dir / ".lock"
-        if self.is_rank_zero() and experiment_lock.exists():
+        if (self.is_rank_zero() and self.gpus_per_job > 1) and experiment_lock.exists():
             os.remove(experiment_lock)
 
     @staticmethod
@@ -390,7 +390,7 @@ class ExperimentWatcher(Generic[TExperimentConfig]):
         experiment_log_dir = self.get_experiment_dir(info, self.logging_dir)
         experiment_log_dir.mkdir(parents=True, exist_ok=True)
         experiment_log_file = experiment_log_dir / "experiment.log"
-        if not self.is_rank_zero():
+        if not self.is_rank_zero() and self.gpus_per_job > 1:
             while not experiment_run_file.exists():
                 self.logger.info(
                     "Waiting for rank zero to start the training process ..."
@@ -425,7 +425,9 @@ class ExperimentWatcher(Generic[TExperimentConfig]):
                     stderr=subprocess.STDOUT,
                     cwd=os.getcwd(),
                 )
-                if output.returncode == 0 and self.is_rank_zero():
+                if output.returncode == 0 and (
+                    self.is_rank_zero() or self.gpus_per_job == 1
+                ):
                     experiment_done_file.touch(exist_ok=True)
                 elif output.returncode == 0:
                     while not experiment_done_file.exists():
