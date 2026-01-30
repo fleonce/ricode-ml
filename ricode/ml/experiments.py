@@ -322,9 +322,12 @@ class ExperimentWatcher(Generic[TExperimentConfig]):
                 self.logger.warning(traceback.format_exc())
                 sleep(1)
 
-            for _ in range(3):
-                self.logger.info(".")
-                sleep(1)
+            try:
+                for _ in range(3):
+                    self.logger.info(".")
+                    sleep(1)
+            except KeyboardInterrupt:
+                pass
 
             if not successful:
                 self.delete_run(info)
@@ -444,7 +447,7 @@ class ExperimentWatcher(Generic[TExperimentConfig]):
             self.logger.info("Received KeyboardInterrupt, aborting training process")
             self.delete_run_file(experiment_run_file)
             self.delete_run_file(experiment_done_file)
-            sleep(3)
+            sleep(1)
             raise
 
     def delete_run(self, info: TExperimentConfig):
