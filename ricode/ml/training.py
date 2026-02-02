@@ -389,7 +389,7 @@ def write_reproducibility_checkpoint(
     }
 
     with open(f"{model_path}/requirements.txt", "w") as f:
-        subprocess.run((sys.executable + " -m pip freeze").split(), stdout=f)
+        subprocess.run([sys.executable, *"-m pip freeze".split()], stdout=f)
 
     torch.save(repro_dict, f"{model_path}/repro.pt")
     with open(f"{model_path}/hparams.json", "w") as f:
