@@ -213,8 +213,6 @@ def find_config_path(name_or_path: str | Path) -> Path:
         return name_or_path
     elif isinstance(name_or_path, Path):
         name_or_path = name_or_path.absolute().as_posix()
-    if not name_or_path.endswith(".json"):
-        name_or_path = name_or_path + ".json"
 
     path = Path(name_or_path)
     json5_path = path.with_suffix(".json5")
