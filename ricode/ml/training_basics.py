@@ -413,10 +413,10 @@ def conf_to_mapping(conf: Any):
     if attr.has(type(conf)):
         tgt = {}
         for attrib in attrs.fields_dict(type(conf)).keys():
-            tgt[attrib] = conf_to_json(getattr(conf, attrib))
+            tgt[attrib] = conf_to_mapping(getattr(conf, attrib))
         return tgt
     elif dataclasses.is_dataclass(type(conf)):
-        return {key: conf_to_json(value) for key, value in conf.__dict__.items()}
+        return {key: conf_to_mapping(value) for key, value in conf.__dict__.items()}
     elif isinstance(conf, Mapping):
         return {key: conf_to_mapping(value) for key, value in conf.items()}
     elif isinstance(conf, Sequence) and not isinstance(conf, str):
