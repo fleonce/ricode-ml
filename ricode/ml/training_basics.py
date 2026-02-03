@@ -217,15 +217,15 @@ def find_config_path(name_or_path: str | Path) -> Path:
         name_or_path = name_or_path + ".json"
 
     path = Path(name_or_path)
-    local_path = Path().cwd() / "cfg" / name_or_path
+    json5_path = path.with_suffix(".json5")
 
     if path.exists():
         return path
-    elif local_path.exists():
-        return local_path
+    elif json5_path.exists():
+        return json5_path
     else:
         raise FileNotFoundError(
-            f"Cannot find config '{name_or_path}' as a path or as a local config ({local_path.as_posix()})"
+            f"Cannot find config '{name_or_path}' as a JSON or JSON5 config"
         )
 
 
