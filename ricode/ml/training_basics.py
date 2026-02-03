@@ -317,11 +317,14 @@ def initialize_kwargs_from_config(
 ) -> Mapping[str, Any]:
     config = load_config_from_name_or_path(name_or_path)
 
-    kwargs = config.get(section_name, None)
-    if kwargs is None and raise_if_missing:
-        raise ValueError(section_name, "not in", config)
-    elif kwargs is None:
-        kwargs = {}
+    if section_name is None:
+        kwargs = config
+    else:
+        kwargs = config.get(section_name, None)
+        if kwargs is None and raise_if_missing:
+            raise ValueError(section_name, "not in", config)
+        elif kwargs is None:
+            kwargs = {}
     if include_filepath_in_init:
         warnings.warn("include_filepath_in_init is deprecated", DeprecationWarning)
 
