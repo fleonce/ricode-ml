@@ -419,7 +419,7 @@ def conf_to_mapping(conf: Any):
         return {key: conf_to_json(value) for key, value in conf.__dict__.items()}
     elif isinstance(conf, Mapping):
         return {key: conf_to_mapping(value) for key, value in conf.items()}
-    elif isinstance(conf, Sequence):
+    elif isinstance(conf, Sequence) and not isinstance(conf, str):
         return [conf_to_mapping(value) for value in conf]
     else:
         return conf
