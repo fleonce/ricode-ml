@@ -409,6 +409,22 @@ class Conf(ABC):
         )
 
 
+def conf_to_mapping(conf: Any):
+    if attr.has(type(conf)):
+        tgt = {}
+        for attrib in attrs.fields_dict(type(conf)).keys():
+            tgt[attrib] = conf_to_json(getattr(conf, attrib))
+        return tgt
+    elif dataclasses.is_dataclass(type(conf)):
+        return {key: conf_to_json(value) for key, value in conf.__dict__.items()}
+    else:
+        return conf
+
+
+def conf_to_json(conf: Any, indent=2):
+    return json.dumps(conf_to_mapping(conf), indent=indent)
+
+
 class NameableConfig(Conf):
     pass
 
