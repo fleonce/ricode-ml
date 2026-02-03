@@ -417,6 +417,10 @@ def conf_to_mapping(conf: Any):
         return tgt
     elif dataclasses.is_dataclass(type(conf)):
         return {key: conf_to_json(value) for key, value in conf.__dict__.items()}
+    elif isinstance(conf, Mapping):
+        return {key: conf_to_mapping(value) for key, value in conf.items()}
+    elif isinstance(conf, Sequence):
+        return [conf_to_mapping(value) for value in conf]
     else:
         return conf
 
