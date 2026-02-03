@@ -172,7 +172,9 @@ def _guess_split_name(value: str):
 
 
 def _resolve_split_info(value: Any):  # value is str or dict[str, str]
-    if isinstance(value, str):
+    if isinstance(value, SplitInfo):
+        return value
+    elif isinstance(value, str):
         return SplitInfo(name=_guess_split_name(value), name_or_file=value)
     elif not isinstance(value, dict):
         raise ValueError(value)
@@ -201,7 +203,7 @@ def setup_tokenizer(
     )
 
 
-@attrs.define(kw_only=True, repr=False)
+@attrs.define(repr=False)
 class BasicDataset(Conf, Generic[TAny]):
     # a storage prefix used in the filename for the preprocessed data
     storage_prefix: ClassVar[str] = ""
@@ -233,7 +235,7 @@ class BasicDataset(Conf, Generic[TAny]):
     # a dictionary of SplitInfo objects regarding where each file for each of the splits is located
     # nested dictionaries imply multiple test or validation splits
     splits: Mapping[str, SplitInfo | dict[str, SplitInfo]] = attrs.field(
-        converter=_resolve_split_infos,
+        converter=_resolve_split_infos, factory=OrderedDict
     )
 
     # contains the preprocessed files!
@@ -260,7 +262,9 @@ class BasicDataset(Conf, Generic[TAny]):
 
     model_max_length: Optional[int] = attrs.field(default=None)
     additional_special_tokens: Optional[list[str]] = attrs.field(default=None)
-    tokenizer = attrs.field(converter=attrs.Converter(setup_tokenizer, takes_self=True))
+    tokenizer: Optional[PreTrainedTokenizerBase] = attrs.field(
+        default=None, converter=attrs.Converter(setup_tokenizer, takes_self=True)
+    )
 
     @property
     def data_path(self) -> Path:
