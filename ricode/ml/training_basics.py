@@ -223,7 +223,7 @@ def find_config_path(name_or_path: str | Path) -> Path:
         return json5_path
     else:
         raise FileNotFoundError(
-            f"Cannot find config '{name_or_path}' as a JSON or JSON5 config"
+            f"Cannot find config '{name_or_path}' as a JSON or JSON5 config ({path}, {json5_path})"
         )
 
 
