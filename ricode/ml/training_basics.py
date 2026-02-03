@@ -31,6 +31,7 @@ import torch
 import typing_extensions
 from more_itertools.more import first
 from torch import Tensor
+from transformers import PreTrainedTokenizerBase
 from typing_extensions import Self
 
 try:
@@ -412,8 +413,11 @@ class Conf(ABC):
 def conf_to_mapping(conf: Any):
     if attr.has(type(conf)):
         tgt = {}
-        for attrib in attrs.fields_dict(type(conf)).keys():
-            tgt[attrib] = conf_to_mapping(getattr(conf, attrib))
+        for attrib, attribute in attrs.fields_dict(type(conf)).items():
+            if attribute.repr:
+                tgt[attrib] = repr(getattr(conf, attrib))
+            else:
+                tgt[attrib] = conf_to_mapping(getattr(conf, attrib))
         return tgt
     elif dataclasses.is_dataclass(type(conf)):
         return {key: conf_to_mapping(value) for key, value in conf.__dict__.items()}
@@ -421,6 +425,8 @@ def conf_to_mapping(conf: Any):
         return {key: conf_to_mapping(value) for key, value in conf.items()}
     elif isinstance(conf, Sequence) and not isinstance(conf, str):
         return [conf_to_mapping(value) for value in conf]
+    elif isinstance(conf, PreTrainedTokenizerBase):
+        return conf.name_or_path
     else:
         return conf
 
