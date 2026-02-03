@@ -26,6 +26,7 @@ from typing import (
 
 import attr
 import attrs
+import pyjson5
 import torch
 import typing_extensions
 from more_itertools.more import first
@@ -232,7 +233,7 @@ def load_config_from_name_or_path(name_or_path: str | Path, recursive: bool = Tr
     try:
         config_path = find_config_path(name_or_path)
         with config_path.open() as f:
-            config = json.load(f)
+            config = pyjson5.load(f)
 
         if "base" in config and recursive:
             baseconfig = load_config_from_name_or_path(config["base"], recursive)
