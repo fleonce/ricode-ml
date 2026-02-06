@@ -409,15 +409,26 @@ class Conf(ABC):
         )
 
 
+@runtime_checkable
+class ToMappingProtocol(Protocol):
+    def to_mapping(self) -> Mapping[str, Any]: ...
+
+
+def attrs_conf_to_mapping(conf: Any) -> MutableMapping[str, Any]:
+    tgt = {}
+    for attrib, attribute in attrs.fields_dict(type(conf)).items():
+        if attribute.repr and not isinstance(attribute.repr, bool):
+            tgt[attrib] = attribute.repr(getattr(conf, attrib))
+        else:
+            tgt[attrib] = conf_to_mapping(getattr(conf, attrib))
+    return tgt
+
+
 def conf_to_mapping(conf: Any):
-    if attr.has(type(conf)):
-        tgt = {}
-        for attrib, attribute in attrs.fields_dict(type(conf)).items():
-            if attribute.repr and not isinstance(attribute.repr, bool):
-                tgt[attrib] = attribute.repr(getattr(conf, attrib))
-            else:
-                tgt[attrib] = conf_to_mapping(getattr(conf, attrib))
-        return tgt
+    if isinstance(conf, ToMappingProtocol):
+        return conf_to_mapping(conf.to_mapping())
+    elif attr.has(type(conf)):
+        return attrs_conf_to_mapping(conf)
     elif dataclasses.is_dataclass(type(conf)):
         return {key: conf_to_mapping(value) for key, value in conf.__dict__.items()}
     elif isinstance(conf, Mapping):
