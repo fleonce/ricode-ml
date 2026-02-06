@@ -61,6 +61,7 @@ class ConfProtocol(Protocol):
         cls: type[InitializeType],
         name_or_path: str | pathlib.Path,
         /,
+        section_name=None,
         setup=False,
         setup_function_name=None,
         overrides=None,
@@ -391,8 +392,8 @@ class Conf(ABC):
     def from_file(
         cls: type[InitializeType],
         name_or_path: str | pathlib.Path,
-        section_name=None,
         /,
+        section_name=None,
         setup=False,
         setup_function_name=None,
         overrides=None,
