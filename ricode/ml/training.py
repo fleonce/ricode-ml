@@ -9,6 +9,7 @@ import operator
 import os
 import platform
 import random
+import shlex
 import shutil
 import socket
 import subprocess
@@ -253,6 +254,7 @@ def reproducibility_logging(
     job_config: JobConfig,
     use_tensorboard: bool,
 ) -> TensorboardLogger:
+    logger.info(f"Command = python {' '.join(map(shlex.quote, sys.argv))}")
     logger.info(
         f"Python Version = {sys.version} "
         f"on {platform.system()} {platform.version()} ({platform.platform()})"
