@@ -5,15 +5,29 @@ import typing
 from collections import OrderedDict
 from typing import Mapping, MutableMapping, Optional, Sequence
 
+import numpy as np
 import safetensors.torch
 import torch
 from more_itertools import first
 
 
+_cpu_device = torch.device("cpu")
+
+
+def dtype_for_list(values: Sequence[float] | Sequence[int]):
+    if isinstance(values[0], float):
+        return torch.float
+    elif max(values) > 2**31 - 1:
+        return torch.int64
+    return torch.int32
+
+
 class CumulativeDataset:
     @classmethod
     def from_preprocessed(cls, name_or_path: str | os.PathLike):
-        tensors = safetensors.torch.load_file(os.path.join(name_or_path))
+        tensors = safetensors.torch.load_file(
+            os.path.join(name_or_path, "tensors.safetensors")
+        )
         return cls(tensors, None)
 
     @classmethod
@@ -165,6 +179,7 @@ class CumulativeDataset:
         shape: Optional[Sequence[int | torch.SymInt]] = None,
         binsize: Optional[int] = None,
     ):
+        # todo: save "finished" bins to disk already!
         if device is None:
             device = self.device
         if dtype is None:
@@ -179,7 +194,17 @@ class CumulativeDataset:
         self.bins[key][index] = new_bin
         self.tensors[key + "." + str(index)] = new_bin
 
-    def append(self, tensors: Mapping[str, torch.Tensor]):
+    def append(
+        self,
+        tensors: Mapping[
+            str,
+            torch.Tensor
+            | np.ndarray[int]
+            | np.ndarray[float]
+            | Sequence[int]
+            | Sequence[float],
+        ],
+    ):
         if len(self.cumulative_lengths) == 0:
             # this dataset is empty, set up the cumulative lengths list
             self.keys.update(set(tensors.keys()))
@@ -203,17 +228,33 @@ class CumulativeDataset:
     def _num_bins(self, key: str):
         return len(self.bins[key])
 
-    def _append(self, key: str, tensor: torch.Tensor):
-        this_sequence_length = tensor.size(0)
+    def _extend(
+        self,
+        key: str,
+        tensor_or_list: (
+            torch.Tensor | Sequence[int] | Sequence[float] | Sequence[torch.Tensor]
+        ),
+    ):
+        raise NotImplementedError
+
+    def _append(
+        self, key: str, tensor_or_list: torch.Tensor | Sequence[int] | Sequence[float]
+    ):
+        this_sequence_length = len(tensor_or_list)
+
+        if isinstance(tensor_or_list, Sequence):
+            tensor = torch.tensor(tensor_or_list)
+        else:
+            tensor = tensor_or_list
 
         if self._key_len(key) == 0:
             # we insert the first element for this key, determine the bin size
             binsize = self.binsizes.get(key, None)
             if binsize is None:
                 tensor_shape = tensor.shape[1:]
-                num_elements = math.prod(tensor_shape)
+                num_inner_elements = math.prod(tensor_shape)
                 hint = self.binsize_hints.get(key, 2**14)
-                binsize = hint // num_elements
+                binsize = hint // num_inner_elements
                 self.binsizes[key] = binsize
 
             # create a new bin with everything we know!
@@ -258,7 +299,7 @@ class CumulativeDataset:
 
         cumulative_lengths.append(cumulative_lengths[-1] + this_sequence_length)
 
-    def save_to_disk(self, filename: str | pathlib.Path):
+    def save_to_disk(self, foldername: str | pathlib.Path):
         tensors = OrderedDict(
             {
                 key + "." + str(index): tensor
@@ -270,19 +311,12 @@ class CumulativeDataset:
         for key, cumulative_lengths in self.cumulative_lengths.items():
             tensors[key + "_cumulative_length"] = torch.tensor(cumulative_lengths)
 
-        if not os.path.exists(os.path.dirname(filename)):
-            os.makedirs(os.path.dirname(filename), exist_ok=True)
+        if not os.path.exists(foldername):
+            os.makedirs(foldername, exist_ok=True)
 
-        for key in self.keys:
-            print("-" * 30)
-            print("num bins =", len(self.bins[key]))
-            print("numel per bin =", first(self.bins[key].values()).numel())
-            last_bin = self.bins[key][len(self.bins[key]) - 1]
-            last_bin_index = self.cumulative_lengths[key][-1] % self.binsizes[key]
-            print("last bin usage % =", last_bin_index / last_bin.numel())
-            print(key + ":", list(sorted(self.bins[key].keys())))
-
-        safetensors.torch.save_file(tensors, filename, None)
+        safetensors.torch.save_file(
+            tensors, os.path.join(foldername, "tensors.safetensors"), None
+        )
 
 
 class FlattenedDatasetDict(dict[str, CumulativeDataset]):
@@ -291,7 +325,7 @@ class FlattenedDatasetDict(dict[str, CumulativeDataset]):
         return cls(
             {
                 split: CumulativeDataset.from_preprocessed(
-                    os.path.join(name_or_path, split + ".safetensors")
+                    os.path.join(name_or_path, split)
                 )
                 for split in {"eval", "test", "train"}
             }

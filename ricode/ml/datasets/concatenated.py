@@ -38,6 +38,14 @@ class ConcatenatedDatasetOld:
         return self.cumulative_lengths[-1]
 
 
+def cumulative_sum(elements: Sequence[int]) -> Sequence[int]:
+    sum = list(elements)
+
+    for i in range(1, len(elements)):
+        sum[i] = sum[i - 1] + elements[i]
+    return sum
+
+
 class ConcatenatedDataset:
     @classmethod
     def from_mapping(cls, m: Mapping[Any, SupportsGetItemAndLength[Any]]):
