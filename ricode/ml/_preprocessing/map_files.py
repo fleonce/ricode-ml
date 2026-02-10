@@ -1,18 +1,29 @@
 import functools
 import json
+import multiprocessing
 import os
 import time
 from collections import OrderedDict
 from queue import Empty
 from typing import (
-    Sequence, Union, Optional, Mapping, Any, MutableMapping, TypeAlias, Protocol, ParamSpec, Generic,
-    Callable, Generator, Literal, Iterable,
+    Any,
+    Callable,
+    Generator,
+    Iterable,
+    Literal,
+    Mapping,
+    MutableMapping,
+    Optional,
+    ParamSpec,
+    Protocol,
+    Sequence,
+    TypeAlias,
+    Union,
 )
 
 import attrs
 import more_itertools
 import multiprocess.queues
-import multiprocessing
 
 import torch
 from more_itertools import first
@@ -21,13 +32,18 @@ from tqdm import tqdm
 
 from ricode.ml.datasets.cumulative import CumulativeDataset
 from ricode.ml.datasets.distributed import DistributedDataset
-from ricode.utils.imports import is_pyarrow_available, is_datasets_available
+from ricode.utils.imports import is_datasets_available, is_pyarrow_available
 
-_map_return_t: TypeAlias = Mapping[str, Union[torch.Tensor, Sequence[int], Sequence[float], Sequence[torch.Tensor]]]
+_map_return_t: TypeAlias = Mapping[
+    str, Union[torch.Tensor, Sequence[int], Sequence[float], Sequence[torch.Tensor]]
+]
 P = ParamSpec("P")
 
+
 class MapFunction(Protocol[P]):
-    def __call__(self, batch: MutableMapping[str, Sequence[Any]], /, **kwargs: P.kwargs) -> _map_return_t:
+    def __call__(
+        self, batch: MutableMapping[str, Sequence[Any]], /, **kwargs: P.kwargs
+    ) -> _map_return_t:
         pass
 
 
@@ -63,18 +79,20 @@ def _rank_based_distribution(iterable: Iterable[Any], rank: int, world_size: int
         if rank_idx == rank:
             yield data
 
+
 def _rank_based_batched(
     iterable: Sequence[Any], n: int, strict: bool, rank: int, world_size: int
 ):
-    return _rank_based_distribution(more_itertools.batched(iterable, n, strict=strict), rank, world_size)
+    return _rank_based_distribution(
+        more_itertools.batched(iterable, n, strict=strict), rank, world_size
+    )
 
 
 # list of dicts to batch/dict of lists
 def _lod_to_batch(lod, column_names) -> MutableMapping[str, Sequence[Any]]:
     return OrderedDict(
         {
-            column_name: [
-                lod[pos][column_name] for pos in range(len(lod))]
+            column_name: [lod[pos][column_name] for pos in range(len(lod))]
             for column_name in column_names
         }
     )
@@ -108,9 +126,12 @@ def _batches_of_data(
                     for column_name in column_names
                 ]
             ):
-                yield LazyBatch({
-                    column_name: batch[pos] for pos, column_name in enumerate(column_names)
-                })
+                yield LazyBatch(
+                    {
+                        column_name: batch[pos]
+                        for pos, column_name in enumerate(column_names)
+                    }
+                )
         elif data_file.name_or_path.endswith(".jsonl"):
             with open(data_file.name_or_path) as jsonl_file:
                 for line_batch in batched(jsonl_file):
@@ -150,7 +171,7 @@ def _batches_of_data(
         dataset = load_dataset(data_file.name_or_path)
         size = len(dataset)
         for indices in batched(range(size), batch_size):
-            yield dataset[indices[0]:indices[-1]]
+            yield dataset[indices[0] : indices[-1]]
     else:
         raise NotImplementedError(data_file.dataset_type)
 
@@ -170,11 +191,16 @@ def _map_data_file(
 ) -> Generator[tuple[int, int], None, None]:
     dataset = None
 
-    for batch in _batches_of_data(data_file, column_names, batch_size, rank, world_size):
+    for batch in _batches_of_data(
+        data_file, column_names, batch_size, rank, world_size
+    ):
         this_batch_size = len(first(batch.values()))
         if this_batch_size < batch_size and drop_last:
             # todo: is continue the right choice here?
             #   probably not, since out_queue misses the status update
+            continue
+        if True:
+            yield this_batch_size, 0
             continue
 
         result = fn(batch, **fn_kwargs)
@@ -182,7 +208,7 @@ def _map_data_file(
         if dataset is None:
             if dataset_type == "flattened":
                 dataset = CumulativeDataset.new_empty(
-                    {column_name: 2 ** 16 for column_name in result.keys()}
+                    {column_name: 2**16 for column_name in result.keys()}
                 )
             else:
                 raise NotImplementedError(dataset_type)
@@ -193,6 +219,7 @@ def _map_data_file(
         del result, batch
         yield this_batch_size, max(this_batch_size - this_result_size, 0)
 
+    return
     dataset.save_to_disk(out_file)
 
 
@@ -263,7 +290,7 @@ def map_to_disk(
     workers_per_file: int = 1,
     fn_kwargs: Optional[Mapping[str, Any]] = None,
     multiprocessing_mode: Literal["process", "threads"] = "process",
-) -> Union[]:
+) -> Union[None]:
     return map_files(
         data_files,
         fn,
@@ -309,9 +336,7 @@ def map_files(
 
     total_size = _estimate_size(data_files)
     if num_proc > 1 and num_proc % workers_per_file != 0:
-        raise ValueError(
-            f"{num_proc=} must be divisible by {workers_per_file=}"
-        )
+        raise ValueError(f"{num_proc=} must be divisible by {workers_per_file=}")
 
     progress_postfix = OrderedDict(
         completed_files=0,
@@ -328,8 +353,7 @@ def map_files(
 
     if num_proc == 1:
         dataset_dirs = [
-            os.path.join(save_path, f"data{i}")
-            for i in range(len(data_files))
+            os.path.join(save_path, f"data{i}") for i in range(len(data_files))
         ]
         for data_file, dataset_dir in zip(data_files, dataset_dirs):
             for num_processed, num_lost in _map_data_file(
@@ -346,9 +370,7 @@ def map_files(
                 progress_postfix["lost"] += num_lost
                 progress_bar.set_postfix(progress_postfix, refresh=False)
                 progress_bar.update(num_processed)
-        with open(
-            os.path.join(save_path, "dataset_info.json"), "w"
-        ) as info_f:
+        with open(os.path.join(save_path, "dataset_info.json"), "w") as info_f:
             json.dump(
                 {
                     "type": "cumulative",
@@ -408,10 +430,7 @@ def map_files(
             )
 
             async_results = [
-                pool.apply_async(
-                    _map_worker, args
-                )
-                for _ in range(num_proc)
+                pool.apply_async(_map_worker, args) for _ in range(num_proc)
             ]
 
             check_t = time.time()
@@ -438,10 +457,7 @@ def map_files(
                         else:
                             raise NotImplementedError(status)
                         jobs_done = all(
-                            [
-                                async_result.ready()
-                                for async_result in async_results
-                            ]
+                            [async_result.ready() for async_result in async_results]
                         )
                         if progress >= total_size and jobs_done:
                             break
@@ -456,19 +472,14 @@ def map_files(
                                 for async_result in async_results
                             ]
                         except (
-                                TimeoutError,
-                                multiprocess.context.TimeoutError,
+                            TimeoutError,
+                            multiprocess.context.TimeoutError,
                         ):
                             pass
             finally:
-                [
-                    async_result.get(timeout=0.05)
-                    for async_result in async_results
-                ]
+                [async_result.get(timeout=0.05) for async_result in async_results]
 
-        with open(
-            os.path.join(save_path, "dataset_info.json"), "w"
-        ) as info_f:
+        with open(os.path.join(save_path, "dataset_info.json"), "w") as info_f:
             json.dump(
                 {
                     "type": "distributed_cumulative",
