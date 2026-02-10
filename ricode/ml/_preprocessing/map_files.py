@@ -199,9 +199,6 @@ def _map_data_file(
             # todo: is continue the right choice here?
             #   probably not, since out_queue misses the status update
             continue
-        if True:
-            yield this_batch_size, 0
-            continue
 
         result = fn(batch, **fn_kwargs)
 
@@ -219,7 +216,6 @@ def _map_data_file(
         del result, batch
         yield this_batch_size, max(this_batch_size - this_result_size, 0)
 
-    return
     dataset.save_to_disk(out_file)
 
 
