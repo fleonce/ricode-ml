@@ -450,7 +450,7 @@ def map_files(
                             progress_postfix["lost"] += lost
                             progress_bar.set_postfix(progress_postfix)
                             progress_bar.update(advanced)
-                        elif isinstance(status, str):
+                        elif isinstance(status, DataFile):
                             # thread/process has completed a data_file
                             progress_postfix["completed_files"] += 1
                             progress_bar.set_postfix(progress_postfix)
