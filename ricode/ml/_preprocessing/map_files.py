@@ -329,7 +329,7 @@ def map_files(
     # to-memory -> ???
 ]:
     if not isinstance(data_files[0], DataFile):
-        data_files = [DataFile(data_file) for data_file in data_files]
+        data_files = [DataFile(str(data_file)) for data_file in data_files]
 
     if desc is None:
         desc = f"map({len(data_files)} files)"
@@ -407,7 +407,7 @@ def map_files(
                 for worker_id in range(workers_per_file):
                     in_queue.put(
                         (
-                            str(data_file),
+                            data_file,
                             dataset_dir,
                             worker_id,
                             workers_per_file,
