@@ -40,7 +40,9 @@ from transformers import (
     PreTrainedTokenizerBase,
 )
 
+from ricode.ml._preprocessing.map_files import map_to_disk, DataFile, map_files
 from ricode.ml.datasets.concatenated import ConcatenatedDataset
+from ricode.ml.datasets.distributed import DistributedDataset
 from ricode.ml.datasets.index import IndexDataset
 from ricode.ml.distributed import distributed_world_size
 from ricode.ml.distributed.utils import (
@@ -52,6 +54,7 @@ from ricode.ml.distributed.utils import (
 )
 from ricode.ml.training_basics import Conf
 from ricode.ml.training_utils import cached_property
+from ricode.utils.imports import is_datasets_available
 
 try:
     import datasets
@@ -408,6 +411,23 @@ class BasicDataset(Conf, Generic[TAny]):
             else:
                 self._setup_split(split, split_info)
 
+    def setup(self, num_proc: int = 1, batch_size: int = 1000):
+        """
+        New implementation for setup_dataset() that accepts num_proc and batch_size as function arguments
+        and internally leverages the new map function to increase preprocessing speed!
+
+        By default, multiprocessing is disabled (num_proc=1)
+        """
+        for split in sorted(self.splits.keys()):
+            if split not in self.split_names:
+                continue
+
+            split_info = self.splits[split]
+            if isinstance(split_info, dict):
+                self._setup_dict_split(split, split_info, num_proc, batch_size)
+            else:
+                self._setup_split(split, split_info, num_proc, batch_size)
+
     def setup_crossvalidation(self, seed: int):
         flattened_data = OrderedDict(
             {
@@ -439,7 +459,7 @@ class BasicDataset(Conf, Generic[TAny]):
 
     def _load_split_data(self, split: str, split_info: SplitInfo):
         if self.sample_format == "huggingface":
-            if not DATASETS:
+            if is_datasets_available():
                 raise ImportError(
                     'datasets library required, install via "pip install datasets"'
                 )
@@ -469,13 +489,30 @@ class BasicDataset(Conf, Generic[TAny]):
         else:
             raise ValueError(f"Unknown sample format {self.sample_format!r}")
 
-    def _setup_dict_split(self, split: str, split_infos: dict[str, SplitInfo]):
+    def _setup_dict_split(
+        self,
+        split: str,
+        split_infos: Mapping[str, SplitInfo],
+        num_proc=None,
+        batch_size=None,
+    ):
         datasets = OrderedDict()
         for key in sorted(split_infos.keys()):
-            datasets[key] = self._setup_split_base(split, split_infos[key])
+            datasets[key] = self._setup_split_base(
+                split,
+                split_infos[key],
+                num_proc=None,
+                batch_size=None,
+            )
         self.data[split] = datasets
 
-    def _setup_split_base(self, split: str, split_info: SplitInfo):
+    def _setup_split_base(
+        self,
+        split: str,
+        split_info: SplitInfo,
+        num_proc=None,
+        batch_size=None,
+    ):
 
         def exists_dataset(info: SplitInfo):
             if split_info.extension == ".safetensors":
@@ -486,24 +523,39 @@ class BasicDataset(Conf, Generic[TAny]):
                 raise ValueError(split_info.extension)
 
         if self.force_setup or not exists_dataset(split_info):
+            if num_proc is not None:
+                pass
+            raise NotImplementedError("keep the old code alongside the new functionality and switch based on num_proc!=None")
+
             # todo: move load split data to this function, setup_examples too! make one larger function
             # so we can do real multiprocessing and not rank zero first, the others follow!
             loaded_data = self._load_split_data(split, split_info)
-            dataset = self.inner_setup_examples(
-                split, split_info, loaded_data, self.setup_example
+
+            data_files = []
+            if self.sample_format == "huggingface":
+                data_files.append(DataFile(split_info.name_or_file, "huggingface"))
+            elif self.sample_format == "json":
+                file_path = self._split_path(split, split_info)
+
+                data_files.append(DataFile(str(file_path), "file"))
+            else:
+                raise NotImplementedError(self.sample_format)
+
+            dataset = map_files(
+                data_files,
+                self.setup_example,
+                self.column_names,
+                "to-disk" if not self.memory_only else "to-memory",
+                self._split_path(split, split_info, is_final=True),
+                batch_size,
+                False,
+                num_proc=num_proc,
+                return_dataset_type=self.storage_dataset_type,
             )
-            if (
-                self.use_shards
-                and isinstance(dataset, (SafetensorsDataset, SafetensorsDict))
-                and len(dataset) > self.shard_size
-            ):
-                dataset = dataset.shard(self.shard_size, preprocess_if_unprocessed=True)
-            if not self.memory_only:
-                self._save_split0(split, split_info, dataset)
-                dataset = self._load_split0(split, split_info)
+            raise NotImplementedError("self.column_names, self.storage_dataset_type, batch_size, num_proc as function arguments to setup_dataset")
             return dataset
         else:
-            return self._load_split0(split, split_info)
+            return DistributedDataset.from_preprocessed(self._split_path(split, split_info, is_final=True))
 
     def _setup_split(self, split: str, split_info: SplitInfo):
         self.data[split] = self._setup_split_base(split, split_info)
