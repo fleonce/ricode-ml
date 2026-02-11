@@ -26,6 +26,7 @@ from typing import (
 )
 
 import more_itertools
+import multiprocess.managers
 import multiprocess.queues
 
 import torch
@@ -466,7 +467,7 @@ def map_files(
             (
                 multiprocessing.Manager()
                 if multiprocessing_mode == "threads"
-                else multiprocess.Manager()
+                else multiprocess.managers.SyncManager()
             ) as manager,
         ):
             in_queue = manager.Queue()
