@@ -363,7 +363,7 @@ def map_dict_of_files(
         if result is not None:
             return_dataset[split] = result
 
-    with open(os.path.join(save_path, "dataset_info.json", "w")) as json_f:
+    with open(os.path.join(save_path, "dataset_info.json"), "w") as json_f:
         json.dump({"type": "dict", "splits": list(dict_of_data_files.keys())}, json_f)
     del json_f
 
