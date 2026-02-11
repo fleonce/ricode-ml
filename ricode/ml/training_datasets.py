@@ -40,9 +40,9 @@ from transformers import (
     PreTrainedTokenizerBase,
 )
 
-from ricode.ml._preprocessing.map_files import map_to_disk, DataFile, map_files
+from ricode.ml._preprocessing.map_files import DataFile, map_files, unbatched_function
 from ricode.ml.datasets.concatenated import ConcatenatedDataset
-from ricode.ml.datasets.distributed import DistributedDataset
+from ricode.ml.datasets.dataset import load_from_disk
 from ricode.ml.datasets.index import IndexDataset
 from ricode.ml.distributed import distributed_world_size
 from ricode.ml.distributed.utils import (
@@ -217,9 +217,15 @@ class BasicDataset(Conf, Generic[TAny]):
     use_shards: ClassVar[bool] = True
     # when using SafetensorsDataset, what size should a single stored dataset be allowed to have?
     shard_size: ClassVar[int] = 10000
+    # which storage type to use
+    #  flattened supports 1-D variable length data
+    #  safetensors supports N-D + sparse + variable length data
+    storage_dataset_type: ClassVar[Literal["flattened", "safetensors"]] = "flattened"
 
     # the format of the samples being loaded
     sample_format: ClassVar[str] = "json"
+    # the columns to load from file
+    column_names: ClassVar[list[str]] = []
     # whether to always re-create the dataset, disregarding existing on-disk cached files
     force_dataset_setup: ClassVar[bool] = False
     # whether to keep the preprocessed data in memory only or to save it on-disk
@@ -298,6 +304,9 @@ class BasicDataset(Conf, Generic[TAny]):
 
     def setup_example(self, split: str, split_info: SplitInfo, data: TAny):
         raise NotImplementedError(self.__class__.__name__ + ".setup_example")
+
+    def setup_example_(self, data: TAny, split: str, split_info: SplitInfo):
+        return self.setup_example(split, split_info, data)
 
     def __repr__(self):
         def format_split(dataset):
@@ -501,8 +510,8 @@ class BasicDataset(Conf, Generic[TAny]):
             datasets[key] = self._setup_split_base(
                 split,
                 split_infos[key],
-                num_proc=None,
-                batch_size=None,
+                num_proc=num_proc,
+                batch_size=batch_size,
             )
         self.data[split] = datasets
 
@@ -516,7 +525,13 @@ class BasicDataset(Conf, Generic[TAny]):
 
         def exists_dataset(info: SplitInfo):
             if split_info.extension == ".safetensors":
-                return exists_safetensors(self._split_path(split, info, is_final=True))
+                if num_proc is None:
+                    return exists_safetensors(
+                        self._split_path(split, info, is_final=True)
+                    )
+                return os.path.exists(
+                    self._split_path(split, info, is_final=True, num_proc=num_proc)
+                )
             elif split_info.extension == ".datasets":
                 return os.path.exists(self._split_path(split, info, is_final=True))
             else:
@@ -524,41 +539,69 @@ class BasicDataset(Conf, Generic[TAny]):
 
         if self.force_setup or not exists_dataset(split_info):
             if num_proc is not None:
-                pass
-            raise NotImplementedError("keep the old code alongside the new functionality and switch based on num_proc!=None")
+                data_files = []
+                if self.sample_format == "huggingface":
+                    data_files.append(DataFile(split_info.name_or_file, "huggingface"))
+                elif self.sample_format == "json":
+                    file_path = self._split_path(split, split_info)
 
-            # todo: move load split data to this function, setup_examples too! make one larger function
-            # so we can do real multiprocessing and not rank zero first, the others follow!
-            loaded_data = self._load_split_data(split, split_info)
+                    data_files.append(DataFile(str(file_path), "file"))
+                else:
+                    raise NotImplementedError(self.sample_format)
 
-            data_files = []
-            if self.sample_format == "huggingface":
-                data_files.append(DataFile(split_info.name_or_file, "huggingface"))
-            elif self.sample_format == "json":
-                file_path = self._split_path(split, split_info)
+                if self.memory_only:
+                    raise ValueError(
+                        "the to-memory option of map_files is unsupported at the moment"
+                    )
 
-                data_files.append(DataFile(str(file_path), "file"))
+                dataset = map_files(
+                    data_files,
+                    unbatched_function(self.setup_example_),
+                    self.column_names,
+                    "to-disk" if not self.memory_only else "to-memory",
+                    str(
+                        self._split_path(
+                            split, split_info, is_final=True, num_proc=num_proc
+                        )
+                    ),
+                    batch_size,
+                    False,
+                    num_proc=num_proc,
+                    workers_per_file=num_proc,
+                    fn_kwargs={"split": split, "split_info": split_info},
+                    return_dataset_type=self.storage_dataset_type,
+                )
+                return dataset
             else:
-                raise NotImplementedError(self.sample_format)
-
-            dataset = map_files(
-                data_files,
-                self.setup_example,
-                self.column_names,
-                "to-disk" if not self.memory_only else "to-memory",
-                self._split_path(split, split_info, is_final=True),
-                batch_size,
-                False,
-                num_proc=num_proc,
-                return_dataset_type=self.storage_dataset_type,
-            )
-            raise NotImplementedError("self.column_names, self.storage_dataset_type, batch_size, num_proc as function arguments to setup_dataset")
-            return dataset
+                loaded_data = self._load_split_data(split, split_info)
+                dataset = self.inner_setup_examples(
+                    split, split_info, loaded_data, self.setup_example
+                )
+                if (
+                    self.use_shards
+                    and isinstance(dataset, (SafetensorsDataset, SafetensorsDict))
+                    and len(dataset) > self.shard_size
+                ):
+                    dataset = dataset.shard(
+                        self.shard_size, preprocess_if_unprocessed=True
+                    )
+                if not self.memory_only:
+                    self._save_split0(split, split_info, dataset)
+                    dataset = self._load_split0(split, split_info)
+                return dataset
         else:
-            return DistributedDataset.from_preprocessed(self._split_path(split, split_info, is_final=True))
+            if num_proc is None:
+                return self._load_split0(split, split_info)
+            return load_from_disk(
+                self._split_path(split, split_info, is_final=True, num_proc=num_proc)
+            )
 
-    def _setup_split(self, split: str, split_info: SplitInfo):
-        self.data[split] = self._setup_split_base(split, split_info)
+    def _setup_split(
+        self, split: str, split_info: SplitInfo, num_proc=None, batch_size=None
+    ):
+        self.data[split] = self._setup_split_base(
+            split, split_info, num_proc, batch_size
+        )
 
     def _save_split0(self, split: str, split_info: SplitInfo, dataset: Any):
         split_path = self._split_path(split, split_info, is_final=True)
@@ -591,13 +634,21 @@ class BasicDataset(Conf, Generic[TAny]):
         return dataset
 
     def _split_path(
-        self, split: str, split_info: SplitInfo, *, is_final: bool = False
+        self,
+        split: str,
+        split_info: SplitInfo,
+        *,
+        is_final: bool = False,
+        num_proc=None,
     ) -> Path:
         data_directory = self.data_path
         if not data_directory.exists():
             data_directory.mkdir(parents=True, exist_ok=False)
         return data_directory / self._split_filename(
-            split, split_info, is_final=is_final
+            split,
+            split_info,
+            is_final=is_final,
+            num_proc=num_proc,
         )
 
     def _split_filename_additional_args(
@@ -606,7 +657,12 @@ class BasicDataset(Conf, Generic[TAny]):
         return list()
 
     def _split_filename(
-        self, split: str, split_info: SplitInfo, *, is_final: bool = False
+        self,
+        split: str,
+        split_info: SplitInfo,
+        *,
+        is_final: bool = False,
+        num_proc=None,
     ) -> str:
         if is_final:
             file_path = split_info.path
@@ -620,7 +676,7 @@ class BasicDataset(Conf, Generic[TAny]):
                 filename = filename + arg
             if self._storage_prefix:
                 filename = self._storage_prefix + filename
-            if split_info.extension == ".safetensors":
+            if split_info.extension == ".safetensors" and num_proc is None:
                 filename = filename + split_info.extension
             return filename
         return split_info.name_or_file

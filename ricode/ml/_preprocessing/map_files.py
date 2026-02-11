@@ -3,6 +3,7 @@ import json
 import multiprocessing
 import os
 import time
+import typing
 from collections import OrderedDict
 from queue import Empty
 from typing import (
@@ -21,17 +22,16 @@ from typing import (
     Union,
 )
 
-import attrs
 import more_itertools
 import multiprocess.queues
 
 import torch
 from more_itertools import first
-from safetensors_dataset import load_safetensors
+from safetensors_dataset import load_safetensors, SafetensorsDataset
 from tqdm import tqdm
 
 from ricode.ml.datasets.cumulative import CumulativeDataset
-from ricode.ml.datasets.distributed import DistributedDataset
+from ricode.ml.datasets.dataset import DataFile, Dataset, DatasetDict, load_from_disk
 from ricode.utils.imports import is_datasets_available, is_pyarrow_available
 
 _map_return_t: TypeAlias = Mapping[
@@ -45,12 +45,6 @@ class MapFunction(Protocol[P]):
         self, batch: MutableMapping[str, Sequence[Any]], /, **kwargs: P.kwargs
     ) -> _map_return_t:
         pass
-
-
-@attrs.define
-class DataFile:
-    name_or_path: str
-    dataset_type: Literal["huggingface", "flattened", "safetensors", "file"] = "file"
 
 
 class LazyBatch(Mapping[str, Any]):
@@ -107,7 +101,7 @@ def _batches_of_data(
 ) -> Generator[LazyBatch | MutableMapping[str, Sequence[Any]], None, None]:
     if world_size > 1:
         batched = functools.partial(
-            _rank_based_batched, rank=rank, world_size=world_size
+            _rank_based_batched, strict=False, rank=rank, world_size=world_size
         )
     else:
         batched = more_itertools.batched
@@ -116,9 +110,13 @@ def _batches_of_data(
         if data_file.name_or_path.endswith(".parquet"):
             if not is_pyarrow_available():
                 raise ValueError("pyarrow is not installed")
+
             import pyarrow.parquet as pq
 
             table = pq.read_table(data_file.name_or_path)
+
+            if not column_names:
+                column_names = table.column_names
 
             for batch in zip(
                 *[
@@ -134,20 +132,27 @@ def _batches_of_data(
                 )
         elif data_file.name_or_path.endswith(".jsonl"):
             with open(data_file.name_or_path) as jsonl_file:
-                for line_batch in batched(jsonl_file):
+                for line_batch in batched(jsonl_file, batch_size):
                     lod = [json.loads(line) for line in line_batch]
+
+                    if not column_names:
+                        column_names = list(lod[0].keys())
+
                     yield _lod_to_batch(lod, column_names)
         elif data_file.name_or_path.endswith(".json"):
             with open(data_file.name_or_path) as json_file:
                 line_jsons = json.load(json_file)
 
-            for lod in batched(line_jsons):
+            for lod in batched(line_jsons, batch_size):
+                if not column_names:
+                    column_names = list(lod[0].keys())
+
                 yield _lod_to_batch(lod, column_names)
         else:
             raise NotImplementedError("Unknown extension of file " + repr(data_file))
     elif data_file.dataset_type == "flattened":
         with open(os.path.join(data_file.name_or_path, "dataset_info.json")):
-            dataset = DistributedDataset.from_preprocessed(data_file.name_or_path)
+            dataset = load_from_disk(data_file.name_or_path)
 
         for indices in batched(range(len(dataset)), batch_size):
             yield _lod_to_batch(
@@ -189,6 +194,7 @@ def _map_data_file(
     rank: int = 0,
     world_size: int = 1,
 ) -> Generator[tuple[int, int], None, None]:
+    # derive initialization to when we know the keys of the result object
     dataset = None
 
     for batch in _batches_of_data(
@@ -201,22 +207,35 @@ def _map_data_file(
             continue
 
         result = fn(batch, **fn_kwargs)
+        result_batch_size = len(first(result.values()))
 
-        if dataset is None:
-            if dataset_type == "flattened":
+        if dataset_type == "flattened":
+            if dataset is None:
                 dataset = CumulativeDataset.new_empty(
                     {column_name: 2**16 for column_name in result.keys()}
                 )
-            else:
-                raise NotImplementedError(dataset_type)
+            for sample in range(result_batch_size):
+                dataset.append({key: values[sample] for key, values in result.items()})
+            del result, batch
 
-        this_result_size = len(first(result.values()))
-        for sample in range(this_result_size):
-            dataset.append({key: values[sample] for key, values in result.items()})
-        del result, batch
-        yield this_batch_size, max(this_batch_size - this_result_size, 0)
+        elif dataset_type == "safetensors":
+            if dataset is None:
+                dataset = {key: [] for key in result.keys()}
 
-    dataset.save_to_disk(out_file)
+            for key, values in result.items():
+                dataset[key].extend(values)
+
+        yield this_batch_size, max(this_batch_size - result_batch_size, 0)
+
+    if dataset_type == "flattened":
+        dataset.save_to_disk(out_file)
+    elif dataset_type == "safetensors":
+        if dataset is None:
+            dataset = {}
+        dataset = SafetensorsDataset.from_dict(dataset, preprocess=True)
+
+        os.makedirs(out_file, exist_ok=True)
+        dataset.save_to_file(os.path.join(out_file, "tensors.safetensors"))
 
 
 def _map_worker(
@@ -274,10 +293,37 @@ def _estimate_size(data_files: Sequence[DataFile]):
     return sum(map(_estimate_item, data_files)) or None
 
 
-def map_to_disk(
-    data_files: Sequence[str] | Sequence[DataFile],
+def unbatched_function(
+    fn: Callable[
+        [MutableMapping[str, Any]],
+        Mapping[str, torch.Tensor | Sequence[int] | Sequence[float]],
+    ]
+) -> Callable[[MutableMapping[str, Sequence[Any]]], _map_return_t]:
+    def batched_function(batch: MutableMapping[str, Sequence[Any]], **kwargs):
+        batch_size = len(first(batch.values()))
+
+        result = OrderedDict()
+        for index in range(batch_size):
+            _result = fn(
+                {key: values[index] for key, values in batch.items()}, **kwargs
+            )
+            if not _result:
+                continue
+            for key, value in _result.items():
+                if key not in result:
+                    result[key] = [value]
+                else:
+                    result[key].append(value)
+        return result
+
+    return batched_function
+
+
+def map_dict_of_files(
+    dict_of_data_files: typing.OrderedDict[str, Sequence[str] | Sequence[DataFile]],
     fn: MapFunction[P] | Callable[[MutableMapping[str, Sequence[Any]]], _map_return_t],
     column_names: Sequence[str],
+    mode: Literal["to-disk", "to-intermediate", "to-memory"] = "to-disk",
     save_path: Optional[str] = None,
     batch_size: int = 1000,
     drop_last: bool = False,
@@ -286,21 +332,39 @@ def map_to_disk(
     workers_per_file: int = 1,
     fn_kwargs: Optional[Mapping[str, Any]] = None,
     multiprocessing_mode: Literal["process", "threads"] = "process",
-) -> Union[None]:
-    return map_files(
-        data_files,
-        fn,
-        column_names,
-        "to-disk",
-        save_path,
-        batch_size,
-        drop_last,
-        desc,
-        num_proc,
-        workers_per_file,
-        fn_kwargs,
-        multiprocessing_mode,
-    )
+    return_dataset_type: Literal["flattened", "safetensors"] = "flattened",
+    return_mapped: bool = True,
+) -> "Optional[DatasetDict]":
+    return_dataset = DatasetDict()
+
+    for split, data_files in dict_of_data_files.items():
+        split_path = os.path.join(save_path, split)
+
+        result = map_files(
+            data_files,
+            fn,
+            column_names,
+            mode,
+            split_path,
+            batch_size,
+            drop_last,
+            desc,
+            num_proc,
+            workers_per_file,
+            fn_kwargs,
+            multiprocessing_mode,
+            return_dataset_type,
+        )
+        if result is not None:
+            return_dataset[split] = result
+
+    with open(os.path.join(save_path, "dataset_info.json", "w")) as json_f:
+        json.dump({"type": "dict", "splits": list(dict_of_data_files.keys())}, json_f)
+    del json_f
+
+    if return_mapped:
+        return return_dataset
+    return None
 
 
 def map_files(
@@ -317,15 +381,21 @@ def map_files(
     fn_kwargs: Optional[Mapping[str, Any]] = None,
     multiprocessing_mode: Literal["process", "threads"] = "process",
     return_dataset_type: Literal["flattened", "safetensors"] = "flattened",
+    return_mapped: bool = True,
 ) -> Union[
-    # to-disk -> None
+    # return_mapped == False
     None,
-    # unsupported at the moment:
-    # to-intermediate -> ???
-    # to-memory -> ???
+    # return_mapped == True
+    "Dataset",
 ]:
+    if fn_kwargs is None:
+        fn_kwargs = OrderedDict()
+
     if not isinstance(data_files[0], DataFile):
         data_files = [DataFile(str(data_file)) for data_file in data_files]
+
+    if mode in {"to-intermediate", "to-memory"}:
+        raise NotImplementedError("currently, all steps must be saved on-disk")
 
     if desc is None:
         desc = f"map({len(data_files)} files)"
@@ -366,16 +436,6 @@ def map_files(
                 progress_postfix["lost"] += num_lost
                 progress_bar.set_postfix(progress_postfix, refresh=False)
                 progress_bar.update(num_processed)
-        with open(os.path.join(save_path, "dataset_info.json"), "w") as info_f:
-            json.dump(
-                {
-                    "type": "cumulative",
-                    "data_files": list(map(os.path.dirname, dataset_dirs)),
-                    "batch_size": fn_kwargs["batch_size"],
-                },
-                info_f,
-            )
-        del info_f
     else:
         dataset_dirs = [
             os.path.join(save_path, f"data{i}_rank{rank}")
@@ -393,7 +453,7 @@ def map_files(
             (
                 multiprocessing.Manager()
                 if multiprocessing_mode == "threads"
-                else multiprocess.managers.SyncManager()
+                else multiprocess.Manager()
             ) as manager,
         ):
             in_queue = manager.Queue()
@@ -475,14 +535,18 @@ def map_files(
             finally:
                 [async_result.get(timeout=0.05) for async_result in async_results]
 
-        with open(os.path.join(save_path, "dataset_info.json"), "w") as info_f:
-            json.dump(
-                {
-                    "type": "distributed_cumulative",
-                    "data_files": list(map(os.path.dirname, dataset_dirs)),
-                    "world_size": workers_per_file,
-                    "batch_size": batch_size,
-                },
-                info_f,
-            )
-        del info_f
+    with open(os.path.join(save_path, "dataset_info.json"), "w") as info_f:
+        json.dump(
+            {
+                "type": return_dataset_type,
+                "data_files": list(map(os.path.basename, dataset_dirs)),
+                "world_size": workers_per_file,
+                "batch_size": batch_size,
+            },
+            info_f,
+        )
+    del info_f
+
+    if return_mapped:
+        return load_from_disk(save_path)
+    return None
