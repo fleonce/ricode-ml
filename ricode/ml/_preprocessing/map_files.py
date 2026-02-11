@@ -216,7 +216,7 @@ def _map_data_file(
         if dataset_type == "flattened":
             if dataset is None:
                 dataset = CumulativeDataset.new_empty(
-                    {column_name: 2**16 for column_name in result.keys()}
+                    {column_name: 2**18 for column_name in result.keys()}
                 )
             for sample in range(result_batch_size):
                 dataset.append({key: values[sample] for key, values in result.items()})
