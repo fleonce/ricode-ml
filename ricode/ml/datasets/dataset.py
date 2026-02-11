@@ -89,6 +89,14 @@ class Dataset:
         else:
             self.dataset = datasets[0]
 
+    def __repr__(self):
+        num_shards = (
+            1
+            if not isinstance(self.dataset, ConcatenatedDataset)
+            else len(self.dataset.datasets)
+        )
+        return f"Dataset(samples={len(self)}, shards={num_shards})"
+
     def __len__(self):
         return len(self.dataset)
 

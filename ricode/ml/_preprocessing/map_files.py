@@ -1,7 +1,10 @@
+import faulthandler
 import functools
 import json
 import multiprocessing
 import os
+import signal
+import sys
 import time
 import typing
 from collections import OrderedDict
@@ -249,6 +252,8 @@ def _map_worker(
     mode: Literal["to-disk", "to-intermediate", "to-memory"],
     dataset_type: Literal["flattened", "safetensors"],
 ):
+    _check_faulthandler()
+
     while work := in_queue.get():
         data_file, out_file, rank, world_size = work
         for status in _map_data_file(
@@ -367,6 +372,16 @@ def map_dict_of_files(
     return None
 
 
+_faulthandler_registered = False
+
+
+def _check_faulthandler():
+    global _faulthandler_registered
+    if not _faulthandler_registered:
+        _faulthandler_registered = True
+        faulthandler.register(signal.SIGUSR1, sys.stderr, True, True)
+
+
 def map_files(
     data_files: Sequence[str] | Sequence[DataFile],
     fn: MapFunction[P] | Callable[[MutableMapping[str, Sequence[Any]]], _map_return_t],
@@ -388,6 +403,8 @@ def map_files(
     # return_mapped == True
     "Dataset",
 ]:
+    _check_faulthandler()
+
     if fn_kwargs is None:
         fn_kwargs = OrderedDict()
 
@@ -459,12 +476,15 @@ def map_files(
             in_queue = manager.Queue()
             out_queue = manager.Queue()
 
-            for data_file, dataset_dir in zip(data_files, dataset_dirs):
+            for data_file in data_files:
                 for worker_id in range(workers_per_file):
                     in_queue.put(
                         (
                             data_file,
-                            dataset_dir,
+                            dataset_dirs[
+                                data_files.index(data_file) * workers_per_file
+                                + worker_id
+                            ],
                             worker_id,
                             workers_per_file,
                         )
