@@ -11,6 +11,20 @@ from ricode.ml.datasets.concatenated import ConcatenatedDataset
 from ricode.ml.datasets.cumulative import CumulativeDataset
 
 
+def is_dataset_dict(disk_folder: str | os.PathLike) -> bool:
+    if not os.path.isdir(disk_folder):
+        return False
+
+    dataset_info_file = os.path.join(disk_folder, "dataset_info.json")
+    if not os.path.exists(dataset_info_file):
+        return False
+
+    with open(dataset_info_file, "r") as f:
+        dataset_info = json.load(f)
+    del f
+    return dataset_info["type"] == "dict"
+
+
 def load_from_disk(disk_folder: str | os.PathLike) -> "Dataset | DatasetDict":
     if not os.path.isdir(disk_folder):
         raise ValueError(f"{disk_folder!r} is not a directory")
