@@ -216,7 +216,7 @@ def _map_data_file(
         if dataset_type == "flattened":
             if dataset is None:
                 dataset = CumulativeDataset.new_empty(
-                    {column_name: 2**18 for column_name in result.keys()}
+                    {column_name: 2**20 for column_name in result.keys()}
                 )
             for sample in range(result_batch_size):
                 dataset.append({key: values[sample] for key, values in result.items()})
@@ -273,6 +273,7 @@ def _map_worker(
             out_queue.put(status)
         if rank == 0:
             out_queue.put(data_file)
+        del data_file, out_file, rank, world_size
 
     # report this process has finished
     out_queue.put(None)
