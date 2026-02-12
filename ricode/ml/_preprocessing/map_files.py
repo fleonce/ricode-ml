@@ -253,6 +253,8 @@ def _map_worker(
     mode: Literal["to-disk", "to-intermediate", "to-memory"],
     dataset_type: Literal["flattened", "safetensors"],
 ):
+    _check_faulthandler()
+
     while work := in_queue.get():
         data_file, out_file, rank, world_size = work
         for status in _map_data_file(
@@ -402,6 +404,8 @@ def map_files(
     # return_mapped == True
     "Dataset",
 ]:
+    _check_faulthandler()
+
     if fn_kwargs is None:
         fn_kwargs = OrderedDict()
 
