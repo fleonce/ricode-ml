@@ -44,6 +44,7 @@ class CumulativeDataset:
         cumulative_lengths=None,
         binsizes=None,
         binsize_hints=None,
+        max_binsize=2**23,
     ):
         if tensors is None:
             tensors = {}
@@ -73,6 +74,7 @@ class CumulativeDataset:
             if name not in binsizes:
                 binsizes[name] = int(tensor.size(0))
         self.bins = bins
+        self.max_binsize = max_binsize
         self.binsizes = binsizes
         self.binsize_hints = binsize_hints
 
