@@ -343,7 +343,7 @@ def map_dict_of_files(
     fn_kwargs: Optional[Mapping[str, Any]] = None,
     multiprocessing_mode: Literal["process", "threads"] = "process",
     return_dataset_type: Literal["flattened", "safetensors"] = "flattened",
-    return_mapped: bool = True,
+    return_mapped: Literal[False, "lazy", "in-memory"] = "in-memory",
 ) -> "Optional[DatasetDict]":
     return_dataset = DatasetDict()
 
@@ -364,6 +364,7 @@ def map_dict_of_files(
             fn_kwargs,
             multiprocessing_mode,
             return_dataset_type,
+            return_mapped,
         )
         if result is not None:
             return_dataset[split] = result
@@ -401,11 +402,11 @@ def map_files(
     fn_kwargs: Optional[Mapping[str, Any]] = None,
     multiprocessing_mode: Literal["process", "threads"] = "process",
     return_dataset_type: Literal["flattened", "safetensors"] = "flattened",
-    return_mapped: bool = True,
+    return_mapped: Literal[False, "lazy", "in-memory"] = "in-memory",
 ) -> Union[
     # return_mapped == False
     None,
-    # return_mapped == True
+    # return_mapped == "in-memory", "lazy"
     "Dataset",
 ]:
     _check_faulthandler()
@@ -575,5 +576,5 @@ def map_files(
     del info_f
 
     if return_mapped:
-        return load_from_disk(save_path)
+        return load_from_disk(save_path, lazy=(return_mapped == "lazy"))
     return None

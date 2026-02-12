@@ -25,7 +25,9 @@ def is_dataset_dict(disk_folder: str | os.PathLike) -> bool:
     return dataset_info["type"] == "dict"
 
 
-def load_from_disk(disk_folder: str | os.PathLike) -> "Dataset | DatasetDict":
+def load_from_disk(
+    disk_folder: str | os.PathLike, /, lazy: bool = False
+) -> "Dataset | DatasetDict":
     if not os.path.isdir(disk_folder):
         raise ValueError(f"{disk_folder!r} is not a directory")
 
@@ -40,12 +42,15 @@ def load_from_disk(disk_folder: str | os.PathLike) -> "Dataset | DatasetDict":
     if dataset_info["type"] == "dict":
         dataset_dict = DatasetDict()
         for split in dataset_info["splits"]:
-            dataset_dict[split] = load_from_disk(os.path.join(disk_folder, split))
+            dataset_dict[split] = load_from_disk(
+                os.path.join(disk_folder, split), lazy=lazy
+            )
         return dataset_dict
     else:
         dataset = Dataset(
             disk_folder,
             dataset_info,
+            lazy=lazy,
         )
         return dataset
 
@@ -56,10 +61,18 @@ class DataFile:
     dataset_type: Literal["huggingface", "flattened", "safetensors", "file"] = "file"
 
 
+class LazyField:
+    def __get__(self, instance, owner):
+        raise NotImplementedError
+
+
 class Dataset:
-    def __init__(self, name_or_path: str, metadata: Mapping[str, Any]):
+    def __init__(
+        self, name_or_path: str, metadata: Mapping[str, Any], lazy: bool = False
+    ):
         super().__init__()
         self.name_or_path = name_or_path
+        self.lazy = lazy
         self.dataset_type = metadata.get("type", None)
         if self.dataset_type is None:
             raise ValueError(metadata)
@@ -71,35 +84,46 @@ class Dataset:
             raise ValueError(metadata)
 
         if self.dataset_type == "flattened":
-            datasets = [
-                CumulativeDataset.from_preprocessed(
-                    os.path.join(name_or_path, data_file)
-                )
-                for data_file in tqdm(
-                    self.data_files,
-                    desc="Loading shards",
-                    disable=len(self.data_files) < 10,
-                )
-            ]
-            self._data_files = [
-                DataFile(os.path.join(name_or_path, data_file), "flattened")
-                for data_file in self.data_files
-            ]
+            if not self.lazy:
+                datasets = [
+                    CumulativeDataset.from_preprocessed(
+                        os.path.join(name_or_path, data_file)
+                    )
+                    for data_file in tqdm(
+                        self.data_files,
+                        desc="Loading shards",
+                        disable=len(self.data_files) < 10,
+                    )
+                ]
+            else:
+                datasets = None
         elif self.dataset_type == "safetensors":
-            datasets = [
-                load_safetensors(
-                    os.path.join(name_or_path, data_file, "tensors.safetensors")
-                )
-                for data_file in tqdm(
-                    self.data_files,
-                    desc="Loading shards",
-                    disable=len(self.data_files) < 10,
-                )
-            ]
+            if not self.lazy:
+                datasets = [
+                    load_safetensors(
+                        os.path.join(name_or_path, data_file, "tensors.safetensors")
+                    )
+                    for data_file in tqdm(
+                        self.data_files,
+                        desc="Loading shards",
+                        disable=len(self.data_files) < 10,
+                    )
+                ]
+            else:
+                datasets = None
         else:
             raise NotImplementedError(self.dataset_type)
 
-        if len(datasets) > 1:
+        self._data_files = [
+            DataFile(os.path.join(name_or_path, data_file), "flattened")
+            for data_file in self.data_files
+        ]
+
+        if datasets is None and self.lazy:
+            self.dataset = None
+        elif datasets is None:
+            raise ValueError(datasets)
+        elif len(datasets) > 1:
             self.dataset = ConcatenatedDataset(datasets)
         else:
             self.dataset = datasets[0]
@@ -134,6 +158,7 @@ class Dataset:
         fn_kwargs: Optional[Mapping[str, Any]] = None,
         multiprocessing_mode: Literal["process", "threads"] = "process",
         return_dataset_type: Literal["flattened", "safetensors"] = "flattened",
+        return_mapped: Literal["lazy", "in-memory"] = "in-memory",
     ) -> "Dataset":
         from ricode.ml._preprocessing.map_files import map_files
 
@@ -151,6 +176,7 @@ class Dataset:
             fn_kwargs,
             multiprocessing_mode,
             return_dataset_type,
+            return_mapped,
         )
 
     def reduce(
@@ -202,6 +228,7 @@ class DatasetDict(OrderedDict[str, Dataset]):
         fn_kwargs: Optional[Mapping[str, Any]] = None,
         multiprocessing_mode: Literal["process", "threads"] = "process",
         return_dataset_type: Literal["flattened", "safetensors"] = "flattened",
+        return_mapped: Literal["lazy", "in-memory"] = "in-memory",
     ) -> "DatasetDict":
         from ricode.ml._preprocessing.map_files import map_dict_of_files
 
@@ -219,6 +246,7 @@ class DatasetDict(OrderedDict[str, Dataset]):
             fn_kwargs,
             multiprocessing_mode,
             return_dataset_type,
+            return_mapped,
         )
 
     def reduce(

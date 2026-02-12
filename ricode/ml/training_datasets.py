@@ -570,6 +570,7 @@ class BasicDataset(Conf, Generic[TAny]):
                     workers_per_file=num_proc,
                     fn_kwargs={"split": split, "split_info": split_info},
                     return_dataset_type=self.storage_dataset_type,
+                    return_mapped="in-memory",
                 )
                 return dataset
             else:
