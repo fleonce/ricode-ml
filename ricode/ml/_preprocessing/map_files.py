@@ -422,6 +422,7 @@ def map_files(
         completed_files=0,
         waiting_processes=0,
         lost=0,
+        result_ready=0,
     )
 
     progress_bar = tqdm(
@@ -529,10 +530,11 @@ def map_files(
                             progress_bar.set_postfix(progress_postfix)
                         else:
                             raise NotImplementedError(status)
-                        jobs_done = all(
-                            [async_result.ready() for async_result in async_results]
+                        jobs_ready = sum(
+                            async_result.ready() for async_result in async_results
                         )
-                        if progress >= total_size and jobs_done:
+                        progress_postfix["result_ready"] = jobs_ready
+                        if progress >= total_size and jobs_ready >= num_proc:
                             break
                     except Empty:
                         pass
