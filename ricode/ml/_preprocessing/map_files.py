@@ -255,7 +255,7 @@ def _map_worker(
 ):
     _check_faulthandler()
 
-    while work := in_queue.get():
+    while (work := in_queue.get()) is not None:
         data_file, out_file, rank, world_size = work
         for status in _map_data_file(
             fn,
@@ -276,6 +276,7 @@ def _map_worker(
 
     # report this process has finished
     out_queue.put(None)
+    return 0
 
 
 def _estimate_size(data_files: Sequence[DataFile]):
