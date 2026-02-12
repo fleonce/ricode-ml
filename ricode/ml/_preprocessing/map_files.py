@@ -158,8 +158,7 @@ def _batches_of_data(
         else:
             raise NotImplementedError("Unknown extension of file " + repr(data_file))
     elif data_file.dataset_type == "flattened":
-        with open(os.path.join(data_file.name_or_path, "dataset_info.json")):
-            dataset = load_from_disk(data_file.name_or_path)
+        dataset = CumulativeDataset.from_preprocessed(data_file.name_or_path)
 
         for indices in batched(range(len(dataset)), batch_size):
             yield _lod_to_batch(
@@ -385,7 +384,7 @@ def _check_faulthandler():
     global _faulthandler_registered
     if not _faulthandler_registered:
         _faulthandler_registered = True
-        faulthandler.register(signal.SIGUSR1, sys.stderr, True, True)
+        faulthandler.register(signal.SIGUSR1, sys.stderr, True, False)
 
 
 def map_files(
@@ -519,31 +518,31 @@ def map_files(
             check_t = time.time()
             progress = 0
             try:
+                finished_processes = 0
                 while True:
                     try:
                         status = out_queue.get(timeout=0.05)
                         if status is None:
                             # thread/process is done and has no more work
-                            progress_postfix["waiting_processes"] += 1
-                            progress_bar.set_postfix(progress_postfix)
+                            finished_processes += 1
+                            progress_postfix["waiting_processes"] = finished_processes
                         elif isinstance(status, tuple):
                             # thread/process has completed X amount of samples
                             advanced, lost = status
                             progress += advanced
                             progress_postfix["lost"] += lost
-                            progress_bar.set_postfix(progress_postfix)
                             progress_bar.update(advanced)
                         elif isinstance(status, DataFile):
                             # thread/process has completed a data_file
                             progress_postfix["completed_files"] += 1
-                            progress_bar.set_postfix(progress_postfix)
                         else:
                             raise NotImplementedError(status)
                         jobs_ready = sum(
                             async_result.ready() for async_result in async_results
                         )
                         progress_postfix["result_ready"] = jobs_ready
-                        if progress >= total_size and jobs_ready >= num_proc:
+                        progress_bar.set_postfix(progress_postfix)
+                        if finished_processes >= num_proc:
                             break
                     except Empty:
                         pass

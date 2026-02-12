@@ -50,7 +50,7 @@ def load_from_disk(disk_folder: str | os.PathLike) -> "Dataset | DatasetDict":
         return dataset
 
 
-@attrs.define
+@attrs.define(hash=True)
 class DataFile:
     name_or_path: str
     dataset_type: Literal["huggingface", "flattened", "safetensors", "file"] = "file"
@@ -82,7 +82,8 @@ class Dataset:
                 )
             ]
             self._data_files = [
-                DataFile(data_file, "flattened") for data_file in self.data_files
+                DataFile(os.path.join(name_or_path, data_file), "flattened")
+                for data_file in self.data_files
             ]
         elif self.dataset_type == "safetensors":
             datasets = [
@@ -152,8 +153,41 @@ class Dataset:
             return_dataset_type,
         )
 
+    def reduce(
+        self,
+        fn,
+        column_names: Sequence[str],
+        batch_size: int = 1000,
+        desc: Optional[str] = None,
+        num_proc: int = 1,
+        workers_per_file: int = 1,
+        fn_kwargs: Optional[Mapping[str, Any]] = None,
+        multiprocessing_mode: Literal["process", "threads"] = "process",
+        reduction: Literal["sum", "mean", "min", "max"] = "sum",
+    ):
+        from ricode.ml._preprocessing.reduce_files import reduce_files
+
+        return reduce_files(
+            self._data_files,
+            fn,
+            column_names,
+            batch_size,
+            desc,
+            num_proc,
+            workers_per_file,
+            fn_kwargs,
+            multiprocessing_mode,
+            reduction,
+        )
+
 
 class DatasetDict(OrderedDict[str, Dataset]):
+
+    def _to_dict_of_files(self) -> OrderedDict[str, Sequence[str]]:
+        dict_of_data_files = OrderedDict()
+        for split, dataset in self.items():
+            dict_of_data_files[split] = dataset._data_files
+        return dict_of_data_files
 
     def map_to_disk(
         self,
@@ -169,14 +203,10 @@ class DatasetDict(OrderedDict[str, Dataset]):
         multiprocessing_mode: Literal["process", "threads"] = "process",
         return_dataset_type: Literal["flattened", "safetensors"] = "flattened",
     ) -> "DatasetDict":
-        dict_of_data_files = OrderedDict()
-        for split, dataset in self.items():
-            dict_of_data_files[split] = dataset._data_files
-
         from ricode.ml._preprocessing.map_files import map_dict_of_files
 
         return map_dict_of_files(
-            dict_of_data_files,
+            self._to_dict_of_files(),
             fn,
             column_names,
             "to-disk",
@@ -189,4 +219,31 @@ class DatasetDict(OrderedDict[str, Dataset]):
             fn_kwargs,
             multiprocessing_mode,
             return_dataset_type,
+        )
+
+    def reduce(
+        self,
+        fn,
+        column_names: Sequence[str],
+        batch_size: int = 1000,
+        desc: Optional[str] = None,
+        num_proc: int = 1,
+        workers_per_file: int = 1,
+        fn_kwargs: Optional[Mapping[str, Any]] = None,
+        multiprocessing_mode: Literal["process", "threads"] = "process",
+        reduction: Literal["sum", "mean", "min", "max"] = "sum",
+    ):
+        from ricode.ml._preprocessing.reduce_files import reduce_dict_of_files
+
+        return reduce_dict_of_files(
+            self._to_dict_of_files(),
+            fn,
+            column_names,
+            batch_size,
+            desc,
+            num_proc,
+            workers_per_file,
+            fn_kwargs,
+            multiprocessing_mode,
+            reduction,
         )
