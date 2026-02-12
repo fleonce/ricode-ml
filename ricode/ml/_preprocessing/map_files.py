@@ -134,6 +134,7 @@ def _batches_of_data(
                         for pos, column_name in enumerate(column_names)
                     }
                 )
+            del table
         elif data_file.name_or_path.endswith(".jsonl"):
             with open(data_file.name_or_path) as jsonl_file:
                 for line_batch in batched(jsonl_file, batch_size):
@@ -143,9 +144,11 @@ def _batches_of_data(
                         column_names = list(lod[0].keys())
 
                     yield _lod_to_batch(lod, column_names)
+            del jsonl_file
         elif data_file.name_or_path.endswith(".json"):
             with open(data_file.name_or_path) as json_file:
                 line_jsons = json.load(json_file)
+            del json_file
 
             for lod in batched(line_jsons, batch_size):
                 if not column_names:
