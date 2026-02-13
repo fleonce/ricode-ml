@@ -557,6 +557,7 @@ def map_files(
                             ]
                         except (
                             TimeoutError,
+                            multiprocessing.context.TimeoutError,
                             multiprocess.context.TimeoutError,
                         ):
                             pass
