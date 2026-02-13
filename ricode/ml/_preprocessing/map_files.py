@@ -563,6 +563,8 @@ def map_files(
                             pass
             finally:
                 [async_result.get(timeout=0.05) for async_result in async_results]
+            pool.close()
+            pool.join()
 
     with open(os.path.join(save_path, "dataset_info.json"), "w") as info_f:
         json.dump(
