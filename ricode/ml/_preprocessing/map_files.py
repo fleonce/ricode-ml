@@ -467,6 +467,11 @@ def map_files(
             for rank in range(workers_per_file)
         ]
 
+        def _queue_fn():
+            if multiprocessing_mode == "threads":
+                return multiprocessing.Queue()
+            return multiprocess.Queue()
+
         with (
             progress_bar,
             (
@@ -474,14 +479,9 @@ def map_files(
                 if multiprocessing_mode == "threads"
                 else multiprocess.pool.Pool(num_proc)
             ) as pool,
-            (
-                multiprocessing.Manager()
-                if multiprocessing_mode == "threads"
-                else multiprocess.managers.SyncManager()
-            ) as manager,
         ):
-            in_queue = manager.Queue()
-            out_queue = manager.Queue()
+            in_queue = _queue_fn()
+            out_queue = _queue_fn()
 
             for data_file in data_files:
                 for worker_id in range(workers_per_file):
@@ -562,6 +562,8 @@ def map_files(
                             pass
             finally:
                 [async_result.get(timeout=0.05) for async_result in async_results]
+            pool.close()
+            pool.join()
 
     with open(os.path.join(save_path, "dataset_info.json"), "w") as info_f:
         json.dump(
