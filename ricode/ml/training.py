@@ -610,6 +610,11 @@ def get_training_steps(
         steps_per_epoch = args.hparams.num_steps
 
     if isinstance(args.hparams, StepBasedTraining):
+        if isinstance(args.hparams.eval_every_n_steps, str):
+            args.hparams.eval_every_n_steps = _parse_num_steps(
+                args.hparams.eval_every_n_steps, steps_per_epoch
+            )
+
         args.hparams.patience *= args.hparams.eval_every_n_steps
 
         if isinstance(args.hparams.num_steps, str):
