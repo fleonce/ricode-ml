@@ -62,16 +62,13 @@ def tokenize_pretokenized_batch(
     min_length: int = 0,
     key: str = "content",
 ):
-    tokens_dtype = dtype_for_tokenizer(tokenizer)
-    samples = tokenizer(batch[key], truncation=True, is_split_into_words=True)[
-        "input_ids"
-    ]
-    tokens = [
-        _sample_to_tensor(sample, tokens_dtype)
-        for sample in samples
-        if not min_length or len(sample) >= min_length > 0
-    ]
-    return {"tokens": tokens}
+    return tokenize_batch(batch, tokenizer, min_length, key, True)
+
+
+def word_ids_as_tensor(word_ids: list[int | None], dtype: torch.dtype) -> torch.Tensor:
+    smallest_int = torch.iinfo(dtype).min
+    word_ids = [w if w is not None else smallest_int for w in word_ids]
+    return torch.tensor(word_ids, dtype=dtype)
 
 
 def tokenize_batch(
@@ -80,12 +77,37 @@ def tokenize_batch(
     tokenizer: PreTrainedTokenizerBase,
     min_length: int = 0,
     key: str = "content",
+    input_is_pretokenized: bool = False,
+    return_word_ids: bool = False,
+    word_id_dtype: torch.dtype | None = None,
 ):
     tokens_dtype = dtype_for_tokenizer(tokenizer)
-    samples = tokenizer(batch[key], truncation=True)["input_ids"]
-    tokens = [
-        _sample_to_tensor(sample, tokens_dtype)
-        for sample in samples
-        if not min_length or len(sample) >= min_length > 0
-    ]
-    return {"tokens": tokens}
+    word_id_dtype = word_id_dtype or tokens_dtype
+
+    tokenizer_input = batch[key]
+    if input_is_pretokenized and "modernbert" in tokenizer.name_or_path.lower():
+        tokenizer_input = [
+            [token if pos == 0 else " " + token for pos, token in enumerate(tokens)]
+            for tokens in tokenizer_input
+        ]
+
+    tokenizer_output = tokenizer(
+        tokenizer_input, truncation=True, is_split_into_words=input_is_pretokenized
+    )
+    samples = tokenizer_output["input_ids"]
+
+    output = {"tokens": []}
+    if return_word_ids:
+        output["word_ids"] = []
+
+    for i in range(len(samples)):
+        skip_sample = min_length and len(samples[i] < min_length)
+        if skip_sample:
+            continue
+
+        output["tokens"].append(_sample_to_tensor(samples[i], tokens_dtype))
+        if return_word_ids:
+            word_ids = tokenizer_output.word_ids(i)
+            output["word_ids"].append(word_ids_as_tensor(word_ids, word_id_dtype))
+
+    return output
