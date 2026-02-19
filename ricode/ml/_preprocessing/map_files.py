@@ -331,7 +331,9 @@ def unbatched_function(
 
 
 def map_dict_of_files(
-    dict_of_data_files: typing.OrderedDict[str, Sequence[str] | Sequence[DataFile]],
+    dict_of_data_files: typing.OrderedDict[
+        str, Sequence[str] | Sequence[DataFile] | str
+    ],
     fn: MapFunction[P] | Callable[[MutableMapping[str, Sequence[Any]]], _map_return_t],
     column_names: Sequence[str],
     mode: Literal["to-disk", "to-intermediate", "to-memory"] = "to-disk",
@@ -346,6 +348,10 @@ def map_dict_of_files(
     return_dataset_type: Literal["flattened", "safetensors"] = "flattened",
     return_mapped: Literal[False, "lazy", "in-memory"] = "in-memory",
 ) -> "Optional[DatasetDict]":
+    dict_of_data_files = OrderedDict(
+        [(k, [v] if isinstance(v, str) else v) for k, v in dict_of_data_files.items()]
+    )
+
     if mode == "to-intermediate" and save_path is None:
         with TemporaryDirectory("exit") as temp_save_path:
             save_path = temp_save_path
@@ -396,7 +402,7 @@ def _check_faulthandler():
 
 
 def map_files(
-    data_files: Sequence[str] | Sequence[DataFile],
+    data_files: str | Sequence[str] | Sequence[DataFile],
     fn: MapFunction[P] | Callable[[MutableMapping[str, Sequence[Any]]], _map_return_t],
     column_names: Sequence[str],
     mode: Literal["to-disk", "to-intermediate", "to-memory"] = "to-disk",
@@ -421,6 +427,8 @@ def map_files(
     if fn_kwargs is None:
         fn_kwargs = OrderedDict()
 
+    if isinstance(data_files, str):
+        data_files = [data_files]
     if not isinstance(data_files[0], DataFile):
         data_files = [DataFile(str(data_file)) for data_file in data_files]
 
