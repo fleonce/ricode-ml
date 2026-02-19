@@ -1,3 +1,4 @@
+import warnings
 from typing import Mapping, Optional, Sequence, TypedDict
 
 from tqdm import tqdm
@@ -26,6 +27,7 @@ def bio_to_json(
     progress: bool = False,
     desc: str | None = None,
     id_to_tag: Optional[Mapping[int, str]] = None,
+    strict: bool = False,
 ) -> tuple[Sequence[JsonSample], set[str]]:
     result_samples = []
     result_tags = set()
@@ -38,7 +40,9 @@ def bio_to_json(
 
 
 def sample_bio_to_json(
-    sample: BIOSample, id_to_tag: Optional[Mapping[int, str]]
+    sample: BIOSample,
+    id_to_tag: Optional[Mapping[int, str]],
+    strict: bool = False,
 ) -> tuple[JsonSample, set[str]]:
     """
     Converts a single BIO-tagged sample to the equivalent JSON variant
@@ -46,6 +50,7 @@ def sample_bio_to_json(
     Args:
         sample (BIOSample): The sample, tagged in BIO format
         id_to_tag: An optional mapping to convert an integer tag id to a string
+        strict (bool): Whether to raise errors on data misalignment or just to skip entities during parsing
     Returns:
         A tuple containing the converted sample and a set of identified entity types
     """
@@ -56,6 +61,11 @@ def sample_bio_to_json(
     start_index = 0
     entities = []
     num_begin_tags = 0
+
+    def _raise_or_warn(msg: str):
+        if strict:
+            raise ValueError(msg)
+        warnings.warn(msg)
 
     def finish_entity(entity: JsonEntity):
         if entity["type"] is None:
@@ -98,6 +108,8 @@ def sample_bio_to_json(
             if tag_type == "B":
                 # count how many entities are found, used as verification later
                 num_begin_tags += 1
+            if tag_type == "I" and not current_category:
+                _raise_or_warn(f"Entity in sample {index} starts with a I- tag, beware")
 
             if current_entity and (tag_category != current_category or tag_type == "B"):
                 finish_entity(
@@ -126,7 +138,7 @@ def sample_bio_to_json(
         )
 
     if len(entities) != num_begin_tags:
-        raise ValueError(
+        _raise_or_warn(
             f"{list(zip(sample['tokens'], sample['tags']))}\n"
             f"Parsed {entities=} but expected {num_begin_tags} entities"
         )
