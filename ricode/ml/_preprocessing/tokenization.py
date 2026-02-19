@@ -87,7 +87,10 @@ def tokenize_batch(
     tokenizer_input = batch[key]
     if input_is_pretokenized and "modernbert" in tokenizer.name_or_path.lower():
         tokenizer_input = [
-            [token if pos == 0 else " " + token for pos, token in enumerate(tokens)]
+            [
+                token if pos == 0 or token.startswith(" ") else " " + token
+                for pos, token in enumerate(tokens)
+            ]
             for tokens in tokenizer_input
         ]
 
