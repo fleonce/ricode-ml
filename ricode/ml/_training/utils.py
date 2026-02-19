@@ -53,6 +53,37 @@ def format_to_energy_usage(inp: float):
     return _format_to_powers_of_1000(inp, ["mWh", "Wh", "kWh", "MWh"])
 
 
+def format_to_powers_of(inp: float | int, units=None, base=1000, fmt_fn=None):
+    if units is None:
+        units = [
+            None,
+            "K",  # 10**3
+            "M",  # 10 ** 6
+            "B",  # 10 ** 9
+            "T",  # 10 ** 12
+            "q",  # 10 ** 15
+            "Q",  # 10 ** 18
+        ]
+
+    if fmt_fn is None:
+
+        def fmt_fn(_inp: float | int, u: str):
+            _ret = f"{_inp:.1f}" if isinstance(_inp, float) else f"{_inp:d}"
+            if u:
+                _ret = _ret + " " + u
+            return _ret.rjust(7)
+
+    if inp <= base:
+        if units[0] is None:
+            return fmt_fn(inp, "")
+        return fmt_fn(inp, units[0])
+
+    scale = math.floor(math.log(inp, base))
+    unit = units[scale]
+    number = inp / (base**scale)
+    return fmt_fn(number, unit)
+
+
 def _format_to_powers_of_1000(inp: float | int, units=None, base=1000):
     if units is None:
         units = [
