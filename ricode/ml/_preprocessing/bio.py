@@ -1,4 +1,4 @@
-from typing import Sequence, TypedDict
+from typing import Mapping, Optional, Sequence, TypedDict
 
 from tqdm import tqdm
 
@@ -13,7 +13,7 @@ class JsonEntity(TypedDict):
 
 class BIOSample(TypedDict):
     tokens: Sequence[str]
-    tags: Sequence[str]
+    tags: Sequence[str] | Sequence[int]
 
 
 class JsonSample(TypedDict):
@@ -25,23 +25,27 @@ def bio_to_json(
     samples: Sequence[BIOSample],
     progress: bool = False,
     desc: str | None = None,
+    id_to_tag: Optional[Mapping[int, str]] = None,
 ) -> tuple[Sequence[JsonSample], set[str]]:
     result_samples = []
     result_tags = set()
 
     for sample in tqdm(samples, disable=not progress, desc=desc):
-        json_sample, sample_tags = sample_bio_to_json(sample)
+        json_sample, sample_tags = sample_bio_to_json(sample, id_to_tag)
         result_samples.append(json_sample)
         result_tags.update(sample_tags)
     return result_samples, result_tags
 
 
-def sample_bio_to_json(sample: BIOSample) -> tuple[JsonSample, set[str]]:
+def sample_bio_to_json(
+    sample: BIOSample, id_to_tag: Optional[Mapping[int, str]]
+) -> tuple[JsonSample, set[str]]:
     """
     Converts a single BIO-tagged sample to the equivalent JSON variant
 
     Args:
         sample (BIOSample): The sample, tagged in BIO format
+        id_to_tag: An optional mapping to convert an integer tag id to a string
     Returns:
         A tuple containing the converted sample and a set of identified entity types
     """
@@ -71,6 +75,11 @@ def sample_bio_to_json(sample: BIOSample) -> tuple[JsonSample, set[str]]:
 
     index = 0
     for token, tag in zip(sample["tokens"], sample["tags"]):
+        if isinstance(tag, int):
+            if id_to_tag is None:
+                raise ValueError("tags are ints but no mapping is provided")
+            tag = id_to_tag[tag]
+
         if tag == "O":
             if current_entity:
                 finish_entity(
