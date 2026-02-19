@@ -37,6 +37,7 @@ from tqdm import tqdm
 from ricode.ml.datasets.cumulative import CumulativeDataset
 from ricode.ml.datasets.dataset import DataFile, Dataset, DatasetDict, load_from_disk
 from ricode.utils.imports import is_datasets_available, is_pyarrow_available
+from ricode.utils.tempfiles import TemporaryDirectory
 
 _map_return_t: TypeAlias = Mapping[
     str, Union[torch.Tensor, Sequence[int], Sequence[float], Sequence[torch.Tensor]]
@@ -345,7 +346,13 @@ def map_dict_of_files(
     return_dataset_type: Literal["flattened", "safetensors"] = "flattened",
     return_mapped: Literal[False, "lazy", "in-memory"] = "in-memory",
 ) -> "Optional[DatasetDict]":
+    if mode == "to-intermediate" and save_path is None:
+        with TemporaryDirectory("exit") as temp_save_path:
+            save_path = temp_save_path
+
     return_dataset = DatasetDict()
+    if save_path is None:
+        raise ValueError(f"A save path must be supplied when {mode=!r}")
 
     for split, data_files in dict_of_data_files.items():
         split_path = os.path.join(save_path, split)
@@ -417,8 +424,11 @@ def map_files(
     if not isinstance(data_files[0], DataFile):
         data_files = [DataFile(str(data_file)) for data_file in data_files]
 
-    if mode in {"to-intermediate", "to-memory"}:
+    if mode in {"to-memory"}:
         raise NotImplementedError("currently, all steps must be saved on-disk")
+    if mode == "to-intermediate" and save_path is None:
+        with TemporaryDirectory("exit") as temp_save_path:
+            save_path = temp_save_path
 
     if desc is None:
         desc = f"map({len(data_files)} files)"
