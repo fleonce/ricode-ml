@@ -1,6 +1,6 @@
 import functools
 import math
-from typing import Any, MutableMapping
+from typing import Any, Mapping, MutableMapping
 
 import numpy as np
 import torch
@@ -80,7 +80,14 @@ def tokenize_batch(
     input_is_pretokenized: bool = False,
     return_word_ids: bool = False,
     word_id_dtype: torch.dtype | None = None,
+    tokenizer_kwargs: Mapping[str, Any] | None = None,
 ):
+    if not tokenizer_kwargs:
+        tokenizer_kwargs = {}
+
+    if input_is_pretokenized:
+        tokenizer_kwargs["is_split_into_words"] = True
+
     tokens_dtype = dtype_for_tokenizer(tokenizer)
     word_id_dtype = word_id_dtype or tokens_dtype
 
@@ -95,7 +102,9 @@ def tokenize_batch(
         ]
 
     tokenizer_output = tokenizer(
-        tokenizer_input, truncation=True, is_split_into_words=input_is_pretokenized
+        tokenizer_input,
+        truncation=True,
+        **tokenizer_kwargs,
     )
     samples = tokenizer_output["input_ids"]
 
