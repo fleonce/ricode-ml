@@ -97,6 +97,23 @@ def _lod_to_batch(lod, column_names) -> MutableMapping[str, Sequence[Any]]:
     )
 
 
+def _load_json_line(s: str):
+    try:
+        return json.loads(s)
+    except json.JSONDecodeError:
+        raise ValueError(f"Failed to decode {s} to JSON")
+
+
+def _remove_trailing_newline(s: str):
+    if s.endswith("\n"):
+        s = s[: -len("\n")]
+    return s
+
+
+def _is_not_empty_line(s: str):
+    return len(s) > 0
+
+
 def _batches_of_data(
     data_file: DataFile,
     column_names: Sequence[str],
@@ -139,7 +156,13 @@ def _batches_of_data(
         elif data_file.name_or_path.endswith(".jsonl"):
             with open(data_file.name_or_path) as jsonl_file:
                 for line_batch in batched(jsonl_file, batch_size):
-                    lod = [json.loads(line) for line in line_batch]
+                    lod = [
+                        json.loads(line)
+                        for line in filter(
+                            _is_not_empty_line,
+                            map(_remove_trailing_newline, line_batch),
+                        )
+                    ]
 
                     if not column_names:
                         column_names = list(lod[0].keys())
