@@ -1,5 +1,6 @@
 import functools
 import math
+from collections import OrderedDict
 from typing import Any, Mapping, MutableMapping
 
 import numpy as np
@@ -84,6 +85,8 @@ def tokenize_batch(
 ):
     if not tokenizer_kwargs:
         tokenizer_kwargs = {}
+    if not isinstance(tokenizer_kwargs, MutableMapping):
+        tokenizer_kwargs = OrderedDict(tokenizer_kwargs)
 
     if input_is_pretokenized:
         tokenizer_kwargs["is_split_into_words"] = True
