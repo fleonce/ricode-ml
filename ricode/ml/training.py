@@ -76,6 +76,7 @@ from ricode.ml.model_setup.setup import setup_model
 from ricode.ml.training_basics import (
     BasicHparams,
     BasicMetrics,
+    conf_to_mapping,
     MetricsDict,
     TensorboardLogger,
 )
@@ -298,7 +299,7 @@ def reproducibility_logging(
             "git": get_commit_hash(),
             "seed": seed,
             "dataset": dataset.name,
-            **hparams.__dict__,
+            **conf_to_mapping(hparams),
         },
         disable=not use_tensorboard,
     )
