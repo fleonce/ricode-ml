@@ -23,7 +23,6 @@ ELEntity: TypeAlias = tuple[
     Union[tuple[int, ...], str],
     # el label type
     LabelType,
-
 ]
 
 
