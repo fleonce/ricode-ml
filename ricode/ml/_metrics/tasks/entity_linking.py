@@ -17,12 +17,12 @@ from ricode.ml._metrics.utils import (
 )
 
 ELEntity: TypeAlias = tuple[
+    # position
+    tuple[int, int],
     # tokens_or_text
     Union[tuple[int, ...], str],
     # el label type
     LabelType,
-    # position
-    tuple[int, int],
 ]
 
 
@@ -66,7 +66,7 @@ def _el_score_check_element(
     tokens = _is_tuple_of_tokens_or_str(element[0], "[tokens]")
     typ = _is_str(element[1], "type")
     pos = _is_tuple_of_two_ints(element[2], "position")
-    return tokens, typ, pos
+    return pos, tokens, typ
 
 
 def _el_score_check_set(
