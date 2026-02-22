@@ -1,6 +1,8 @@
 from typing import Any, Literal, Optional, Sequence, TypeAlias, TypeVar, Union
 
 import torch
+
+from more_itertools import first
 from torch import Tensor
 
 TensorTuple: TypeAlias = tuple[torch.Tensor, torch.Tensor]
@@ -63,6 +65,20 @@ def _f1_score_flatten_batch(batched_elements: BatchedOutputs) -> Outputs:
     return output
 
 
+def _f1_score_check_flattened_elements(
+    elements: Outputs,
+    labels: Sequence[LabelType],
+):
+    label_type = first(map(type, labels))
+
+    for element in elements:
+        if not isinstance(element[-1], label_type):
+            raise ValueError(
+                f"The last element in each sample must be the label, of type {label_type!r}. "
+                f"Got {element!r} as a sample"
+            )
+
+
 def _f1_score_update(
     output: BatchedOutputs,
     target: BatchedOutputs,
@@ -75,6 +91,10 @@ def _f1_score_update(
 
     outputs = _f1_score_flatten_batch(output)
     targets = _f1_score_flatten_batch(target)
+
+    if labels is not None:
+        _f1_score_check_flattened_elements(outputs, labels)
+        _f1_score_check_flattened_elements(targets, labels)
 
     return _f1_score_update_flattened(outputs, targets, average, labels, device)
 

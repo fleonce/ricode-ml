@@ -38,22 +38,8 @@ def _el_score_update(
     labels: Optional[Sequence[LabelType]],
     device: torch.device,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor] | tuple[int, int, int]:
-    outputs = list(
-        map(
-            lambda x: _el_score_check_set(
-                x,
-            ),
-            output,
-        )
-    )
-    targets = list(
-        map(
-            lambda x: _el_score_check_set(
-                x,
-            ),
-            target,
-        )
-    )
+    outputs = [_el_score_check_set(x) for x in output]
+    targets = [_el_score_check_set(x) for x in target]
 
     return _f1_score_update(outputs, targets, average, labels, device)
 
