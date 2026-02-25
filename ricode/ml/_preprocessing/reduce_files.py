@@ -125,6 +125,7 @@ def reduce_dict_of_files(
     fn_kwargs: Optional[Mapping[str, Any]] = None,
     multiprocessing_mode: Literal["process", "threads"] = "process",
     reduction: Literal["sum", "mean", "min", "max"] = "sum",
+    progress_bar: bool = True,
 ) -> OrderedDict[str, int | float]:
     reduction_result = OrderedDict()
 
@@ -140,6 +141,7 @@ def reduce_dict_of_files(
             fn_kwargs,
             multiprocessing_mode,
             reduction,
+            progress_bar,
         )
         if result is not None:
             reduction_result[split] = result
@@ -157,6 +159,7 @@ def reduce_files(
     fn_kwargs: Optional[Mapping[str, Any]] = None,
     multiprocessing_mode: Literal["process", "threads"] = "process",
     reduction: Literal["sum", "mean", "min", "max"] = "sum",
+    progress_bar: bool = True,
 ) -> Union[int, float]:
     _check_faulthandler()
 
@@ -198,6 +201,7 @@ def reduce_files(
         total=total_size,
         unit=" samples",
         postfix=progress_postfix,
+        disable=not progress_bar,
     )
 
     reduce_result = _reduce_default(reduction)
