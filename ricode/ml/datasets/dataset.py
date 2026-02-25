@@ -204,6 +204,7 @@ class Dataset:
         fn_kwargs: Optional[Mapping[str, Any]] = None,
         multiprocessing_mode: Literal["process", "threads"] = "process",
         reduction: Literal["sum", "mean", "min", "max"] = "sum",
+        progress_bar: bool = True,
     ):
         from ricode.ml._preprocessing.reduce_files import reduce_files
 
@@ -218,6 +219,7 @@ class Dataset:
             fn_kwargs,
             multiprocessing_mode,
             reduction,
+            progress_bar,
         )
 
 
@@ -274,6 +276,7 @@ class DatasetDict(OrderedDict[str, Dataset]):
         fn_kwargs: Optional[Mapping[str, Any]] = None,
         multiprocessing_mode: Literal["process", "threads"] = "process",
         reduction: Literal["sum", "mean", "min", "max"] = "sum",
+        progress_bar: bool = True,
     ):
         from ricode.ml._preprocessing.reduce_files import reduce_dict_of_files
 
@@ -288,4 +291,5 @@ class DatasetDict(OrderedDict[str, Dataset]):
             fn_kwargs,
             multiprocessing_mode,
             reduction,
+            progress_bar,
         )
