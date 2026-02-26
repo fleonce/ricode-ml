@@ -44,11 +44,20 @@ except ImportError as ie:
 InitializeType = TypeVar("InitializeType")
 
 
+def _parse_bool(s: str) -> bool:
+    if s.lower() == "true":
+        return True
+    elif s.lower() == "false":
+        return False
+    return int(s) != 0
+
+
 PARSE_FUNCTIONS = {
     "str": str,
     "string": str,
     "float": float,
     "int": int,
+    "bool": _parse_bool,
 }
 
 
