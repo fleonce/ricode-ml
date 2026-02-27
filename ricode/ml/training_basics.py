@@ -80,7 +80,6 @@ class ConfProtocol(Protocol):
 
 
 ConfType = TypeVar("ConfType", bound=ConfProtocol)
-_special = object()
 
 
 def merge_update(
@@ -96,9 +95,10 @@ def merge_update(
     keys = set(base.keys()) | set(update_base.keys())
     for k in keys:
         v = base.get(k, None)
-        update_v = update_base.get(k, _special)
+        has_update = k in update_base
+        update_v = update_base.get(k, None)
         if k not in base:
-            if update_v is not _special:
+            if has_update:
                 output[k] = update_v
             continue
 
@@ -194,9 +194,12 @@ def merge_update(
                 continue
             output[k] = v
         elif isinstance(v, dict):
-            assert update_v is None or isinstance(update_v, dict)
-            update_v = update_v or dict()
-            output[k] = merge_update(v, update_v, root, new_root)
+            if has_update:
+                assert update_v is None or isinstance(update_v, dict)
+                update_v = update_v or dict()
+                output[k] = merge_update(v, update_v, root, new_root)
+            else:
+                output[k] = v
         else:
             output[k] = update_v if update_v is not _special else v
     return output
