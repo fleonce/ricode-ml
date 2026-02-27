@@ -9,6 +9,7 @@ import re
 import warnings
 from abc import ABC
 from pathlib import Path
+from types import NoneType
 from typing import (
     Any,
     ClassVar,
@@ -112,7 +113,9 @@ def merge_update(
                 raise ValueError(
                     f"Expected a pre-initialized dict or list for {k!r} to update"
                 )
-            elif not isinstance(v, (MutableSequence, MutableMapping)):
+            elif not isinstance(
+                v, (MutableSequence, MutableMapping, str, int, float, bool)
+            ):
                 raise ValueError(
                     f"Can only update dicts and lists, got {type(v)!r} aka {v!r}"
                 )
@@ -182,6 +185,10 @@ def merge_update(
                                 target_value = _get_nested_key(new_root, target[1:])
                             except KeyNotFound:
                                 target_value = _get_nested_key(root, target[1:])
+                            if type(target_value) not in {type(v), NoneType}:
+                                raise ValueError(
+                                    f"Type confusion for update {update!r} from {v!r} to {target_value!r}"
+                                )
                             v = target_value
                         else:
                             raise ValueError(action)
