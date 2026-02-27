@@ -201,7 +201,7 @@ def merge_update(
             else:
                 output[k] = v
         else:
-            output[k] = update_v if update_v is not _special else v
+            output[k] = update_v if has_update else v
     return output
 
 
