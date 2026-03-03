@@ -290,6 +290,13 @@ class ConfigInitProtocol(Protocol[_T_cont, _U_cont, _T_co]):
     def __call__(self, dataset: _T_cont, hparams: _U_cont) -> _T_co: ...
 
 
+def hyperparameters_are_config() -> ConfigInitProtocol[_T_cont, THparams, THparams]:
+    def func(dataset: _T_cont, hparams: THparams) -> THparams:
+        return hparams
+
+    return func
+
+
 @runtime_checkable
 class DataLoaderProtocol(Protocol[TDataset, THparams]):
     def __call__(
