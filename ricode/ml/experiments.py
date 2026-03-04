@@ -214,7 +214,8 @@ class ExperimentWatcher(Generic[TExperimentConfig]):
                     f"Field {field_name} must be a Sequence, got {value!r}"
                 )
             if len(value) == 0:
-                self.logger.info(f"Field {field_name!r} has zero elements, ignoring")
+                warnings.warn(f"Field {field_name!r} has zero elements, ignoring")
+                continue
             field_values.append(value)
 
         for args in itertools.product(*field_values):
