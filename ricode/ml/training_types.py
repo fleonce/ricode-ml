@@ -80,6 +80,7 @@ class SupportsGetItem(Protocol[_T_co]):
     def __getitem__(self, item: int) -> _T_co: ...
 
 
+@runtime_checkable
 class SupportsGetItemAndLength(Protocol[_T_co]):
     def __getitem__(self, item) -> _T_co: ...
 

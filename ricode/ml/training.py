@@ -94,6 +94,7 @@ from ricode.ml.training_types import (
     OptimizerInitProtocol,
     OptimizerStepProtocol,
     StepBasedTraining,
+    SupportsGetItemAndLength,
     TrainingArgs,
 )
 from ricode.ml.training_utils import (
@@ -530,12 +531,14 @@ def forward_backward(
         # (1) forward pass
         output = model(**batch)
 
-        if not hasattr(output, "loss"):
+        if hasattr(output, "loss"):
+            loss = output.loss
+        elif isinstance(output, SupportsGetItemAndLength):
+            loss = output[0]
+        else:
             raise ValueError(
-                f'Model {type(model).__name__} returned {output} without a "loss" attribute'
+                f'Model {type(model).__name__} returned {output} without a "loss" attribute or an indexable object'
             )
-
-        loss = output.loss
 
         # (2) in case we do gradient accumulation, normalize across the batches
         if args.hparams.gradient_accumulation > 1:
