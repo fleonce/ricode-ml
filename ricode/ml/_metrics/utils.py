@@ -1,4 +1,6 @@
-from typing import Any
+from typing import Any, Protocol, Sequence
+
+import torch
 
 
 def _is_tuple_of_two_ints(element: Any, name: str) -> tuple[int, int]:
@@ -35,3 +37,24 @@ def _is_tuple_of_tokens_or_str(element: Any, name: str) -> tuple[int, ...] | str
     elif not isinstance(element, tuple) or not all(isinstance(x, int) for x in element):
         raise ValueError(f"{name} must be a tuple of ints, but is {element!r}")
     return element  # noqa
+
+
+class SupportsAverageAndCompute(Protocol):
+    average: str | None
+
+    def compute(self) -> torch.Tensor: ...
+
+
+def compute_with_labels(
+    metric: SupportsAverageAndCompute, name: str, labels: Sequence[str]
+):
+    if metric.average not in {"macro", None}:
+        raise ValueError("metric must compute macro or per-class scores")
+
+    scores = metric.compute()
+    if scores.numel() != len(labels):
+        raise ValueError(
+            f"The number of labels ({len(labels)}) does not match the number of scores {scores.numel()}"
+        )
+
+    return {label + "_" + name: scores[i] for i, label in enumerate(labels)}
