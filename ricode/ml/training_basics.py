@@ -32,6 +32,7 @@ import torch
 import typing_extensions
 from more_itertools.more import first
 from torch import Tensor
+from transformers import PretrainedConfig
 from typing_extensions import Self
 
 try:
@@ -450,6 +451,8 @@ def attrs_conf_to_mapping(conf: Any) -> MutableMapping[str, Any]:
 def conf_to_mapping(conf: Any):
     if isinstance(conf, ToMappingProtocol):
         return conf_to_mapping(conf.to_mapping())
+    elif isinstance(conf, PretrainedConfig):
+        return conf.to_diff_dict()
     elif attr.has(type(conf)):
         return attrs_conf_to_mapping(conf)
     elif dataclasses.is_dataclass(type(conf)):
