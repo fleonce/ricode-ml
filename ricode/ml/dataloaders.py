@@ -5,6 +5,8 @@ from typing import (
     Any,
     Callable,
     Iterable,
+    Literal,
+    Mapping,
     Optional,
     Protocol,
     Sequence,
@@ -301,7 +303,66 @@ def join_datasets(
     return concatenated_dataset, batch_sampler
 
 
+def _stack_tensors_with_padding(
+    key: str, tensors: list[torch.Tensor], batch: Batch, padding: int | float
+) -> torch.Tensor:
+    if tensors[0].dim() == 0 or all(tensor.numel() == 1 for tensor in tensors):
+        return torch.stack(tensors, dim=0)
+    elif tensors[0].dim() >= 1:
+        try:
+            return pad_sequence(tensors, batch_first=True, padding_value=padding)
+        except RuntimeError as rt:
+            shapes = list(map(lambda t: t.shape, tensors))
+            raise ValueError(
+                f"Could not pad sequence of tensors for key {key}, shapes are: {shapes}"
+            ) from rt
+    else:
+        raise ValueError(key, tensors[0].shape)
+
+
+class PaddingDataCollator1D:
+    def __init__(
+        self,
+        padding: Mapping[str, tuple[torch.dtype, int | float]],
+        key_order: Optional[list[str]] = None,
+    ):
+        self.padding = padding
+        self.key_order = {key: pos for pos, key in enumerate(key_order or list())}
+
+    def __call__(self, inp: list[dict[str, torch.Tensor]]) -> Batch:
+        bs = len(inp)
+        batch = Batch()
+        keys = set(flatten(elem.keys() for elem in inp))
+        if self.key_order:
+            keys = list(keys)
+            keys.sort(key=lambda x: self.key_order.get(x, len(self.key_order)))
+
+        for key in keys:
+            tensors = [inp[i][key] for i in range(bs)]
+            if key not in self.padding:
+                raise ValueError(f"Padding for {key!r} is undefined")
+            padding_dtype, padding_value = self.padding[key]
+
+            stacked = _stack_tensors_with_padding(key, tensors, batch, padding_value)
+            stacked = stacked.to(padding_dtype)
+            batch[key] = stacked
+
+        # only create the mask if it was explicitly "asked for" in the sense of
+        # a padding value being defined for it
+        if (
+            "attention_mask" not in keys
+            and "input_ids" in keys
+            and "attention_mask" in self.padding
+        ):
+            padding_dtype, padding_value = self.padding["attention_mask"]
+            mask = batch["input_ids"].ne(padding_value).to(padding_dtype)
+            batch["attention_mask"] = mask
+        return batch
+
+
 class SequencePaddingDataCollator:
+    pad_tokens: Mapping[Literal["input_ids", "labels"], int | None]
+
     def __init__(
         self,
         padding: float,
