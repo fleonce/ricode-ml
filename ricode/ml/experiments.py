@@ -207,6 +207,7 @@ class ExperimentWatcher(Generic[TExperimentConfig]):
     def compute_run_info(self) -> Generator[TExperimentConfig, None, None]:
         field_keys = list(attrs.fields_dict(type(self.experiment)).keys())
         field_values = []
+        valid_field_keys = []
         for field_name in field_keys:
             value = getattr(self.experiment, field_name)
             if not isinstance(value, Sequence):
@@ -216,11 +217,12 @@ class ExperimentWatcher(Generic[TExperimentConfig]):
             if len(value) == 0:
                 warnings.warn(f"Field {field_name!r} has zero elements, ignoring")
                 continue
+            valid_field_keys.append(field_name)
             field_values.append(value)
 
         for args in itertools.product(*field_values):
             config_instance = self.config_type()
-            for pos, field_name in enumerate(field_keys):
+            for pos, field_name in enumerate(valid_field_keys):
                 config_instance[field_name] = args[pos]
             yield config_instance
 
