@@ -4,7 +4,7 @@ import signal
 import subprocess
 import sys
 from subprocess import Popen
-from typing import Mapping, Sequence
+from typing import Literal, Mapping, Sequence
 
 from with_argparse import with_argparse
 from with_argparse.configure_argparse import WithArgparse
@@ -137,6 +137,7 @@ def launch(
     master_address: str = "localhost",
     master_port: str = "12345",
     no_gpu: bool = False,
+    distributed_mode: Literal["none", "process-group"] = "none",
     # internal argument:
     _help: bool = False,
     _args: list[str] = None,
@@ -158,7 +159,7 @@ def launch(
 
             device_ids = _parse_gpus(gpus)
             world_size = len(device_ids)
-            is_distributed = len(device_ids) > 1
+            is_distributed = len(device_ids) > 1 and distributed_mode != "none"
 
             inside_primary = _check_inside_primary_screen(
                 screen_pattern, device_ids[0] + 1
