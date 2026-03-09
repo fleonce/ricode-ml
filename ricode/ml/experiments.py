@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+import copy
 import dataclasses
 import enum
 import itertools
@@ -24,6 +24,7 @@ from typing import (
     Generic,
     Literal,
     Mapping,
+    NoReturn,
     Optional,
     Protocol,
     runtime_checkable,
@@ -37,6 +38,13 @@ import typing_extensions
 from with_argparse import with_dataclass
 
 from ricode.ml.training_types import AttrsClass
+from ricode.utils.imports import is_pandas_available
+
+
+if is_pandas_available():
+    import pandas as pd
+else:
+    pd = None
 
 
 @dataclass
@@ -262,6 +270,35 @@ class ExperimentWatcher(Generic[TExperimentConfig]):
             experiment_state = self.get_experiment_state(experiment)
             if experiment_state == ExperimentStatus.STATUS_NOT_STARTED:
                 yield experiment
+
+    if is_pandas_available():
+
+        def to_dataframe(self) -> tuple[pd.DataFrame, pd.DataFrame]:
+
+            data = {}
+            for experiment in self.compute_run_info():
+                experiment_dir = self.get_experiment_dir(
+                    experiment, self.experiment_dir
+                )
+                experiment_metrics = experiment_dir / "metrics.json"
+                if not experiment_metrics.exists():
+                    raise ValueError(experiment_metrics)
+
+                with open(experiment_metrics) as f:
+                    experiment_json = json.load(f)
+
+                metrics = copy.deepcopy(experiment_json["test_metrics"])
+                metrics["_id"] = experiment
+                for key, value in metrics.items():
+                    if key not in data:
+                        data[key] = []
+                    data[key].append(value)
+            return pd.DataFrame.from_dict(data)
+
+    else:
+
+        def to_dataframe(self) -> NoReturn:
+            raise ImportError("pandas is not installed")
 
     # @deprecated
     def summary(self):
