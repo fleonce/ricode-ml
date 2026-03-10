@@ -1,5 +1,6 @@
 import faulthandler
 import functools
+import io
 import json
 import multiprocessing
 import os
@@ -7,6 +8,7 @@ import signal
 import sys
 import time
 import typing
+import warnings
 from collections import OrderedDict
 from queue import Empty
 from typing import (
@@ -14,6 +16,7 @@ from typing import (
     Callable,
     Generator,
     Iterable,
+    Iterator,
     Literal,
     Mapping,
     MutableMapping,
@@ -25,6 +28,7 @@ from typing import (
     Union,
 )
 
+import attrs
 import more_itertools
 import multiprocess.managers
 import multiprocess.queues
@@ -34,8 +38,15 @@ from more_itertools import first
 from safetensors_dataset import load_safetensors, SafetensorsDataset
 from tqdm import tqdm
 
+from ricode.ml._preprocessing.utils import estimate_data_file_size
 from ricode.ml.datasets.cumulative import CumulativeDataset
-from ricode.ml.datasets.dataset import DataFile, Dataset, DatasetDict, load_from_disk
+from ricode.ml.datasets.dataset import (
+    DataFile,
+    Dataset,
+    DatasetDict,
+    load_from_disk,
+    ViewDataFile,
+)
 from ricode.utils.imports import is_datasets_available, is_pyarrow_available
 from ricode.utils.tempfiles import TemporaryDirectory
 
@@ -114,6 +125,39 @@ def _is_not_empty_line(s: str):
     return len(s) > 0
 
 
+@attrs.define
+class _ViewClass:
+    sliceable: Any
+    indices: Sequence[int]
+
+    def __len__(self):
+        return len(self)
+
+    def __iter__(self):
+        return _ViewIterator(self, iter(self.indices))
+
+
+@attrs.define
+class _ViewIterator:
+    view: _ViewClass
+    ref_iterator: Iterator[int]
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        next_index = next(self.ref_iterator)
+        return self.view.sliceable[next_index]
+
+
+def _view_wrapper_batched(original_function, indices: Sequence[int]):
+    @functools.wraps(original_function)
+    def _wrapper(sliceable, **kwargs):
+        return original_function(_ViewClass(sliceable, indices), **kwargs)
+
+    return _wrapper
+
+
 def _batches_of_data(
     data_file: DataFile,
     column_names: Sequence[str],
@@ -127,6 +171,12 @@ def _batches_of_data(
         )
     else:
         batched = more_itertools.batched
+
+    if data_file.is_view and isinstance(data_file, ViewDataFile):  # data_file.is_view
+        # todo: when file is a view,
+        #  batching must be performed on the indices of the view,
+        #  not the original sequence/iterable
+        batched = _view_wrapper_batched(batched, data_file.indices)
 
     if data_file.dataset_type == "file":
         if data_file.name_or_path.endswith(".parquet"):
@@ -155,7 +205,7 @@ def _batches_of_data(
             del table
         elif data_file.name_or_path.endswith(".jsonl"):
             with open(data_file.name_or_path) as jsonl_file:
-                for line_batch in batched(jsonl_file, batch_size):
+                for line_batch in batched(jsonl_file, n=batch_size):
                     lod = [
                         json.loads(line)
                         for line in filter(
@@ -174,7 +224,7 @@ def _batches_of_data(
                 line_jsons = json.load(json_file)
             del json_file
 
-            for lod in batched(line_jsons, batch_size):
+            for lod in batched(line_jsons, n=batch_size):
                 if not column_names:
                     column_names = list(lod[0].keys())
 
@@ -184,7 +234,8 @@ def _batches_of_data(
     elif data_file.dataset_type == "flattened":
         dataset = CumulativeDataset.from_preprocessed(data_file.name_or_path)
 
-        for indices in batched(range(len(dataset)), batch_size):
+        for indices in batched(range(len(dataset)), n=batch_size):
+            pass
             yield _lod_to_batch(
                 [dataset[index] for index in indices],
                 column_names,
@@ -192,7 +243,7 @@ def _batches_of_data(
     elif data_file.dataset_type == "safetensors":
         dataset = load_safetensors(data_file.name_or_path)
 
-        for indices in batched(range(len(dataset)), batch_size):
+        for indices in batched(range(len(dataset)), n=batch_size):
             yield _lod_to_batch(
                 [dataset[index] for index in indices],
                 column_names,
@@ -201,11 +252,14 @@ def _batches_of_data(
         if not is_datasets_available():
             raise ValueError("datasets is not installed")
 
-        from datasets import load_dataset
+        if data_file.data is None:
+            from datasets import load_dataset
 
-        dataset = load_dataset(data_file.name_or_path)
+            dataset = load_dataset(data_file.name_or_path)
+        else:
+            dataset = data_file.data
         size = len(dataset)
-        for indices in batched(range(size), batch_size):
+        for indices in batched(range(size), n=batch_size):
             yield dataset[indices[0] : indices[-1]]
     else:
         raise NotImplementedError(data_file.dataset_type)
@@ -307,24 +361,7 @@ def _map_worker(
 
 
 def _estimate_size(data_files: Sequence[DataFile]):
-    def _estimate_item(data_file: DataFile):
-        if data_file.dataset_type == "file":
-            if data_file.name_or_path.endswith(".parquet"):
-                if not is_pyarrow_available():
-                    raise ValueError("pyarrow is not installed")
-
-                import pyarrow.parquet as pq
-
-                with pq.ParquetFile(data_file.name_or_path) as file:
-                    return file.metadata.num_rows
-            elif data_file.name_or_path.endswith(".jsonl"):
-                return 0
-            elif data_file.name_or_path.endswith(".json"):
-                with open(data_file.name_or_path) as json_file:
-                    return len(json.load(json_file))
-        return 0
-
-    return sum(map(_estimate_item, data_files)) or None
+    return sum(map(estimate_data_file_size, data_files)) or None
 
 
 def unbatched_function(
@@ -405,9 +442,7 @@ def map_dict_of_files(
         if result is not None:
             return_dataset[split] = result
 
-    with open(os.path.join(save_path, "dataset_info.json"), "w") as json_f:
-        json.dump({"type": "dict", "splits": list(dict_of_data_files.keys())}, json_f)
-    del json_f
+    return_dataset.save_metadata_to_disk(save_path)
 
     if return_mapped:
         return return_dataset
@@ -421,11 +456,14 @@ def _check_faulthandler():
     global _faulthandler_registered
     if not _faulthandler_registered:
         _faulthandler_registered = True
-        faulthandler.register(signal.SIGUSR1, sys.stderr, True, False)
+        try:
+            faulthandler.register(signal.SIGUSR1, sys.stderr, True, False)
+        except io.UnsupportedOperation:
+            warnings.warn("Could not register fault handler")
 
 
 def map_files(
-    data_files: str | Sequence[str] | Sequence[DataFile],
+    data_files: str | DataFile | Sequence[str] | Sequence[DataFile],
     fn: MapFunction[P] | Callable[[MutableMapping[str, Sequence[Any]]], _map_return_t],
     column_names: Sequence[str],
     mode: Literal["to-disk", "to-intermediate", "to-memory"] = "to-disk",
@@ -450,7 +488,7 @@ def map_files(
     if fn_kwargs is None:
         fn_kwargs = OrderedDict()
 
-    if isinstance(data_files, str):
+    if isinstance(data_files, (str, DataFile)):
         data_files = [data_files]
     if not isinstance(data_files[0], DataFile):
         data_files = [DataFile(str(data_file)) for data_file in data_files]

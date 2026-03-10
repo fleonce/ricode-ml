@@ -38,7 +38,7 @@ class ConcatenatedDatasetOld:
         return self.cumulative_lengths[-1]
 
 
-def cumulative_sum(elements: Sequence[int]) -> Sequence[int]:
+def cumulative_sum(elements: Sequence[int]) -> list[int]:
     sum = list(elements)
 
     for i in range(1, len(elements)):
@@ -47,6 +47,8 @@ def cumulative_sum(elements: Sequence[int]) -> Sequence[int]:
 
 
 class ConcatenatedDataset:
+    sizes: Sequence[int]
+
     @classmethod
     def from_mapping(cls, m: Mapping[Any, SupportsGetItemAndLength[Any]]):
         keys = list(sorted(m.keys()))
