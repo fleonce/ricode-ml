@@ -1,17 +1,23 @@
 import json
 import os
 from collections import OrderedDict
-from typing import Any, Literal, Mapping, Optional, Sequence
+from typing import Any, Literal, Mapping, MutableMapping, Optional, Sequence
 
 import attrs
 from safetensors_dataset import load_safetensors
 from tqdm import tqdm
 
 from ricode.ml._preprocessing.data_files import DataFile, ViewDataFile
-from ricode.ml._preprocessing.utils import estimate_data_file_size
+from ricode.ml._preprocessing.lazy import LazyMapping
+from ricode.ml._preprocessing.utils import (
+    estimate_data_file_size,
+    expected_keys_in_data_file,
+)
 from ricode.ml.datasets.concatenated import ConcatenatedDataset, cumulative_sum
 from ricode.ml.datasets.cumulative import CumulativeDataset
 from ricode.ml.training_utils import cached_property
+from ricode.utils.imports import is_pyarrow_available
+from ricode.utils.mappings import inverse
 
 
 def is_dataset(disk_folder: str | os.PathLike) -> bool:
@@ -43,7 +49,9 @@ def is_dataset_dict(disk_folder: str | os.PathLike) -> bool:
 
 
 def load_from_disk(
-    disk_folder: str | os.PathLike, /, lazy: bool = False
+    disk_folder: str | os.PathLike,
+    /,
+    lazy: bool | None = None,
 ) -> "Dataset | DatasetDict":
     if not os.path.isdir(disk_folder):
         raise ValueError(f"{disk_folder!r} is not a directory")
@@ -60,27 +68,79 @@ def load_from_disk(
         dataset_dict = DatasetDict()
         for split in dataset_info["splits"]:
             dataset_dict[split] = load_from_disk(
-                os.path.join(disk_folder, split), lazy=lazy
+                os.path.join(disk_folder, split),
+                lazy=lazy,
             )
         return dataset_dict
-    elif dataset_info["type"] == "view":
+
+    return _load_from_disk(disk_folder, dataset_info, lazy)
+
+    # elif dataset_info["type"] in {"view", "select_view"}:
+    #     data_files = [
+    #         ViewDataFile(
+    #             name_or_path=data_file["name_or_path"],
+    #             dataset_type=data_file["dataset_type"],
+    #             data=None,
+    #             indices=data_file["indices"],
+    #         )
+    #         for data_file in dataset_info["data_files"]
+    #     ]
+    #     return SelectView(None, dataset_info["indices"], data_files)
+    # else:
+    #     dataset = Dataset(
+    #         disk_folder,
+    #         dataset_info,
+    #         lazy=lazy,
+    #     )
+    #     return dataset
+
+
+def _load_from_disk(
+    disk_folder: str | os.PathLike[str],
+    metadata: Mapping[str, Any],
+    lazy: bool = False,
+):
+    if metadata["type"] in {"view", "select_view"}:
         data_files = [
             ViewDataFile(
                 name_or_path=data_file["name_or_path"],
                 dataset_type=data_file["dataset_type"],
                 data=None,
-                indices=data_file["indices"],
+                indices=data_file.get("indices", None),
+                renamed_fields=None,
             )
-            for data_file in dataset_info["data_files"]
+            for data_file in metadata["data_files"]
         ]
-        return SelectView(None, dataset_info["indices"], data_files)
-    else:
-        dataset = Dataset(
+        inner_dataset = _load_from_disk(disk_folder, metadata["dataset"], lazy)
+        return SelectView(inner_dataset, metadata["indices"], data_files)
+    elif metadata["type"] == "rename_view":
+        inner_dataset = _load_from_disk(disk_folder, metadata["dataset"], lazy)
+        return RenameView(inner_dataset, metadata["renamed_fields"])
+    elif metadata["type"] in {"flattened", "safetensors"}:
+        return Dataset(
             disk_folder,
-            dataset_info,
-            lazy=lazy,
+            metadata,
+            True if lazy is None else lazy,  # make sure its a bool!
         )
-        return dataset
+    elif metadata["type"] in {"data_files", "parquet"}:
+        if lazy is None:
+            dataset_class = (
+                DataFileDataset if metadata["type"] == "data_files" else ParquetDataset
+            )
+        else:
+            dataset_class = DataFileDataset if lazy else ParquetDataset
+
+        data_files = [
+            DataFile(
+                name_or_path=data_file["name_or_path"],
+                dataset_type=data_file["dataset_type"],
+                data=None,
+            )
+            for data_file in metadata["data_files"]
+        ]
+        return dataset_class(data_files)
+    else:
+        raise NotImplementedError(metadata["type"])
 
 
 class LazyField:
@@ -90,14 +150,48 @@ class LazyField:
 
 class _Dataset:
     def __getattr__(self, item):
-        if item in {"_data_files", "dataset"}:
+        if item in {"_data_files", "dataset", "lazy"}:
             raise NotImplementedError(
-                self.__class__.__name__ + "." + item + " is not defined"
+                self.__class__.__name__ + "." + item + " is not defined",
             )
         return self.__getattribute__(item)
 
+    def __getitem__(self, item):
+        if self.lazy:
+            raise ValueError(
+                f"This dataset ({self.__class__.__name__}) has been loaded lazily, its data cannot be accessed yet."
+            )
+        raise NotImplementedError(
+            self.__class__.__name__ + ".__getitem__",
+        )
+
+    def __lazy_len__(self):
+        return self.cached_length
+
+    @cached_property
+    def cached_length(self):
+        return sum(map(estimate_data_file_size, self._data_files))
+
     def __len__(self):
-        raise NotImplementedError(self.__class__.__name__ + ".__len__")
+        raise NotImplementedError(self.__class__.__name__ + ".__len__()")
+
+    def keys(self):
+        if not self.lazy:
+            return self.dataset.keys()
+        return expected_keys_in_data_file(self._data_files[0])
+
+    def save_metadata(self):
+        raise NotImplementedError(self.__class__.__name__ + ".save_metadata()")
+
+    def save_to_disk(self, save_path: str):
+        if not os.path.exists(save_path):
+            os.makedirs(save_path, exist_ok=True)
+
+        save_metadata = self.save_metadata()
+
+        dataset_info = os.path.join(save_path, "dataset_info.json")
+        with open(dataset_info, "w") as f:
+            json.dump(save_metadata, f)
 
     def map_to_disk(
         self,
@@ -113,6 +207,7 @@ class _Dataset:
         multiprocessing_mode: Literal["process", "threads"] = "process",
         return_dataset_type: Literal["flattened", "safetensors"] = "flattened",
         return_mapped: Literal["lazy", "in-memory"] = "in-memory",
+        progress_bar: bool = True,
     ) -> "Dataset":
         return self.map(
             fn,
@@ -128,6 +223,7 @@ class _Dataset:
             multiprocessing_mode,
             return_dataset_type,
             return_mapped,
+            progress_bar,
         )
 
     def map(
@@ -145,6 +241,7 @@ class _Dataset:
         multiprocessing_mode: Literal["process", "threads"] = "process",
         return_dataset_type: Literal["flattened", "safetensors"] = "flattened",
         return_mapped: Literal["lazy", "in-memory"] = "in-memory",
+        progress_bar: bool = True,
     ) -> "Dataset":
         from ricode.ml._preprocessing.map_files import map_files
 
@@ -163,6 +260,7 @@ class _Dataset:
             multiprocessing_mode,
             return_dataset_type,
             return_mapped,
+            progress_bar,
         )
 
     def reduce(
@@ -211,7 +309,11 @@ class _Dataset:
             cumulative_data_file_sizes = [len(self.dataset)]
 
         if len(cumulative_data_file_sizes) == 1:
-            return [ViewDataFile.view_from(self._data_files[0], indices)]
+            return SelectView(
+                self,
+                indices,
+                [ViewDataFile.view_from(self._data_files[0], indices)],
+            )
 
         # zi = zero inclusive, cumulative sum starting at zero
         zi_cumulative_data_file_sizes = [0] + cumulative_data_file_sizes
@@ -236,12 +338,25 @@ class _Dataset:
 
         data_files = [
             ViewDataFile.view_from(
-                self._data_files[split_index], select_data_files[split_index]
+                self._data_files[split_index],
+                select_data_files[split_index],
             )
             for split_index in sorted(select_data_files.keys())
         ]
 
         return SelectView(self, indices, data_files)
+
+    def rename_fields(self, field_names: Mapping[str, str]):
+        if all(k == v for k, v in field_names.items()):
+            return self
+
+        return RenameView(
+            self,
+            field_names,
+        )
+
+    def rename_field(self, field_name: str, new_field_name: str) -> "RenameView":
+        return self.rename_fields({field_name: new_field_name})
 
 
 @attrs.define
@@ -259,6 +374,18 @@ class DataFileDataset(_Dataset):
     def __len__(self):
         return sum(self.data_file_sizes)
 
+    def save_metadata(self):
+        return {
+            "type": "data_files",
+            "data_files": [
+                {
+                    "name_or_path": data_file.name_or_path,
+                    "dataset_type": data_file.dataset_type,
+                }
+                for data_file in self._data_files
+            ],
+        }
+
 
 class Dataset(_Dataset):
     @staticmethod
@@ -266,7 +393,10 @@ class Dataset(_Dataset):
         return DataFileDataset([DataFile(file_path, "file", None)])
 
     def __init__(
-        self, name_or_path: str, metadata: Mapping[str, Any], lazy: bool = False
+        self,
+        name_or_path: str,
+        metadata: Mapping[str, Any],
+        lazy: bool = False,
     ):
         super().__init__()
         self.name_or_path = name_or_path
@@ -285,7 +415,7 @@ class Dataset(_Dataset):
             if not self.lazy:
                 datasets = [
                     CumulativeDataset.from_preprocessed(
-                        os.path.join(name_or_path, data_file)
+                        os.path.join(name_or_path, data_file),
                     )
                     for data_file in tqdm(
                         self.data_files,
@@ -299,7 +429,7 @@ class Dataset(_Dataset):
             if not self.lazy:
                 datasets = [
                     load_safetensors(
-                        os.path.join(name_or_path, data_file, "tensors.safetensors")
+                        os.path.join(name_or_path, data_file, "tensors.safetensors"),
                     )
                     for data_file in tqdm(
                         self.data_files,
@@ -463,7 +593,11 @@ class DatasetDict(OrderedDict[str, Dataset]):
 class SelectView(_Dataset):
     dataset: Dataset
     indices: Sequence[int]
-    _data_files: Sequence[ViewDataFile]
+    _data_files: Sequence[ViewDataFile] = attrs.field(alias="data_files")
+
+    @property
+    def lazy(self):
+        return self.dataset is None
 
     def __len__(self):
         return len(self.indices)
@@ -472,24 +606,152 @@ class SelectView(_Dataset):
         index = self.indices[item]
         return self.dataset[index]
 
-    def save_to_disk(self, save_path: str):
-        if not os.path.exists(save_path):
-            os.makedirs(save_path, exist_ok=True)
-
-        dataset_info = os.path.join(save_path, "dataset_info.json")
-        with open(dataset_info, "w") as f:
-            json.dump(
+    def save_metadata(self) -> Mapping[str, Any]:
+        return {
+            "type": "view",
+            "indices": self.indices,
+            "data_files": [
                 {
-                    "type": "view",
-                    "data_files": [
-                        {
-                            "name_or_path": data_file.name_or_path,
-                            "dataset_type": data_file.dataset_type,
-                            "indices": data_file.indices,
-                        }
-                        for data_file in self._data_files
-                    ],
-                    "indices": self.indices,
-                },
-                f,
+                    "name_or_path": data_file.name_or_path,
+                    "dataset_type": data_file.dataset_type,
+                    "indices": data_file.indices,
+                }
+                for data_file in self._data_files
+            ],
+            "dataset": self.dataset.save_metadata(),
+        }
+
+
+@attrs.define
+class RenameView(_Dataset):
+    dataset: Dataset
+    renamed_fields: Mapping[str, str]
+
+    @property
+    def _data_files(self):
+        return [
+            ViewDataFile(
+                data_file.name_or_path,
+                data_file.dataset_type,
+                data_file.data,
+                (
+                    None
+                    if not isinstance(data_file, ViewDataFile)
+                    else data_file.indices
+                ),
+                self.renamed_fields,
             )
+            for data_file in self.dataset._data_files
+        ]
+
+    @property
+    def lazy(self):
+        return self.dataset.lazy
+
+    def __len__(self):
+        if self.lazy:
+            return self.__lazy_len__()
+        if self.dataset is None:
+            raise ValueError(f"{self.dataset=}")
+        return len(self.dataset)
+
+    def __getitem__(self, item):
+        result = self.dataset[item]
+        return {
+            (self.renamed_fields[key] if key in self.renamed_fields else key): value
+            for key, value in result.items()
+        }
+
+    def keys(self):
+        keys = super().keys()
+        return [
+            # ignore missing keys and use key as a backup
+            self.renamed_fields.get(key, key)
+            for key in keys
+        ]
+
+    def rename_fields(self, field_names: Mapping[str, str]):
+        for field_name in field_names.keys():
+            if field_name not in self.keys():
+                raise ValueError(
+                    f"Invalid field name {field_name}, expected one of {self.keys()}"
+                )
+
+        updated_renamed_fields = dict(self.renamed_fields)
+        inverted_renamed_fields = inverse(updated_renamed_fields)
+
+        # field_name was the target of a rename before
+        for field_name, new_field_name in field_names.items():
+            if field_name in inverted_renamed_fields:
+                updated_renamed_fields[inverted_renamed_fields[field_name]] = (
+                    new_field_name
+                )
+            else:
+                updated_renamed_fields[field_name] = new_field_name
+
+        return RenameView(
+            self.dataset,
+            updated_renamed_fields,
+        )
+
+    def save_metadata(self) -> Mapping[str, Any]:
+        return {
+            "type": "rename_view",
+            "renamed_fields": self.renamed_fields,
+            "dataset": self.dataset.save_metadata(),
+        }
+
+
+if is_pyarrow_available():
+    import pyarrow
+    import pyarrow.parquet as pq
+
+    @attrs.define
+    class ParquetDataset(_Dataset):
+        _data_files: Sequence[DataFile] = attrs.field(alias="data_files")
+        tables: MutableMapping[int, pyarrow.Table] = attrs.field(
+            init=False, factory=OrderedDict
+        )
+
+        @cached_property
+        def cached_lengths(self):
+            return list(map(estimate_data_file_size, self._data_files))
+
+        @cached_property
+        def cached_length(self):
+            return sum(self.cached_lengths)
+
+        @cached_property
+        def cumulative_cached_lengths(self):
+            return cumulative_sum(self.cached_lengths)
+
+        def __getitem__(self, item):
+            split_index = 0
+            for split_index, split_end_index in enumerate(
+                self.cumulative_cached_lengths
+            ):
+                if item < split_end_index:
+                    break
+            if split_index not in self.tables:
+                self.tables[split_index] = table = pq.read_table(
+                    self._data_files[split_index].name_or_path
+                )
+            else:
+                table = self.tables[split_index]
+
+            if split_index > 0:
+                item -= self.cumulative_cached_lengths[split_index - 1]
+
+            column_names = table.column_names
+            return LazyMapping(
+                {column_name: table[column_name][item] for column_name in column_names}
+            )
+
+        def save_metadata(self) -> Mapping[str, Any]:
+            return {
+                "type": "parquet",
+                "dataset": self.dataset.save_metadata(),
+            }
+
+else:
+    ParquetDataset = None

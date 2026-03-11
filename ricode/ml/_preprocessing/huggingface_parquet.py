@@ -3,7 +3,7 @@ from typing import Callable, NoReturn, Sequence, TYPE_CHECKING
 from more_itertools.more import first
 
 from ricode.ml._preprocessing.data_files import DataFile
-from ricode.ml.datasets.dataset import DataFileDataset, DatasetDict
+from ricode.ml.datasets.dataset import DataFileDataset, DatasetDict, ParquetDataset
 from ricode.utils.imports import is_datasets_available
 
 if is_datasets_available() or TYPE_CHECKING:
@@ -44,6 +44,7 @@ if is_datasets_available() or TYPE_CHECKING:
         adjust_data_files_fn: (
             Callable[[Sequence[DataFile]], Sequence[DataFile]] | None
         ) = None,
+        lazy: bool = True,
     ):
         """
         Load a dataset of parquet files from the huggingface.co website. Requires internet access.
@@ -88,10 +89,14 @@ if is_datasets_available() or TYPE_CHECKING:
         def convert(data_file_paths: Sequence[str]):
             return list(map(lambda p: DataFile(p, "file", None), data_file_paths))
 
+        dataset_class = DataFileDataset
+        if not lazy:
+            dataset_class = ParquetDataset
+
         if isinstance(data_files, Sequence):
             data_files = download_manager.download_and_extract(data_files)
             data_files = convert(data_files)
-            return DataFileDataset(data_files)
+            return dataset_class(data_files)
         else:
             data_files = {
                 split: download_manager.download_and_extract(split_data_files)
@@ -100,7 +105,7 @@ if is_datasets_available() or TYPE_CHECKING:
 
             return DatasetDict(
                 {
-                    split: DataFileDataset(convert(downloaded_split_data_files))
+                    split: dataset_class(convert(downloaded_split_data_files))
                     for split, downloaded_split_data_files in data_files.items()
                 }
             )

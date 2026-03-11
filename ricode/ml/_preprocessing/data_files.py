@@ -1,4 +1,4 @@
-from typing import Literal, Sequence
+from typing import Literal, Mapping, Optional, Sequence
 
 import attrs
 
@@ -22,8 +22,17 @@ class ViewDataFile(DataFile):
             data_file.name_or_path, data_file.dataset_type, data_file.data, indices
         )
 
-    indices: Sequence[int] = attrs.field(factory=list)
+    indices: Optional[Sequence[int]] = None
+    renamed_fields: Optional[Mapping[str, str]] = None
 
     @property
     def is_view(self):
         return True
+
+    @property
+    def has_indices(self):
+        return self.indices is not None
+
+    @property
+    def has_renamed_fields(self):
+        return self.renamed_fields is not None

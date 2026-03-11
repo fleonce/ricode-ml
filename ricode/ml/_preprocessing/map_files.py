@@ -48,6 +48,7 @@ from ricode.ml.datasets.dataset import (
     ViewDataFile,
 )
 from ricode.utils.imports import is_datasets_available, is_pyarrow_available
+from ricode.utils.mappings import inverse
 from ricode.utils.tempfiles import TemporaryDirectory
 
 _map_return_t: TypeAlias = Mapping[
@@ -172,11 +173,35 @@ def _batches_of_data(
     else:
         batched = more_itertools.batched
 
-    if data_file.is_view and isinstance(data_file, ViewDataFile):  # data_file.is_view
+    if (
+        data_file.is_view
+        and isinstance(data_file, ViewDataFile)
+        and data_file.has_indices
+    ):
         # todo: when file is a view,
         #  batching must be performed on the indices of the view,
         #  not the original sequence/iterable
         batched = _view_wrapper_batched(batched, data_file.indices)
+
+    if (
+        data_file.is_view
+        and isinstance(data_file, ViewDataFile)
+        and data_file.has_renamed_fields
+    ):
+
+        def replace_fields(m: Mapping[str, Any]):
+            return {data_file.renamed_fields.get(k, k): v for k, v in m.items()}
+
+        def revert_replaced_fields(ks: Sequence[str]):
+            return [inverse(data_file.renamed_fields).get(k, k) for k in ks]
+
+    else:
+
+        def replace_fields(m: Mapping[str, Any]):
+            return m
+
+        def revert_replaced_fields(ks: Sequence[str]):
+            return ks
 
     if data_file.dataset_type == "file":
         if data_file.name_or_path.endswith(".parquet"):
@@ -189,6 +214,7 @@ def _batches_of_data(
 
             if not column_names:
                 column_names = table.column_names
+            column_names = revert_replaced_fields(column_names)
 
             for batch in zip(
                 *[
@@ -196,12 +222,13 @@ def _batches_of_data(
                     for column_name in column_names
                 ]
             ):
-                yield LazyBatch(
-                    {
-                        column_name: batch[pos]
-                        for pos, column_name in enumerate(column_names)
-                    }
-                )
+                data = {
+                    column_name: batch[pos]
+                    for pos, column_name in enumerate(column_names)
+                }
+                data = replace_fields(data)
+
+                yield LazyBatch(data)
             del table
         elif data_file.name_or_path.endswith(".jsonl"):
             with open(data_file.name_or_path) as jsonl_file:
@@ -217,7 +244,10 @@ def _batches_of_data(
                     if not column_names:
                         column_names = list(lod[0].keys())
 
-                    yield _lod_to_batch(lod, column_names)
+                    data = _lod_to_batch(lod, column_names)
+                    data = replace_fields(data)
+
+                    yield data
             del jsonl_file
         elif data_file.name_or_path.endswith(".json"):
             with open(data_file.name_or_path) as json_file:
@@ -228,26 +258,31 @@ def _batches_of_data(
                 if not column_names:
                     column_names = list(lod[0].keys())
 
-                yield _lod_to_batch(lod, column_names)
+                data = _lod_to_batch(lod, column_names)
+                data = replace_fields(data)
+                yield data
         else:
             raise NotImplementedError("Unknown extension of file " + repr(data_file))
     elif data_file.dataset_type == "flattened":
         dataset = CumulativeDataset.from_preprocessed(data_file.name_or_path)
 
         for indices in batched(range(len(dataset)), n=batch_size):
-            pass
-            yield _lod_to_batch(
+            data = _lod_to_batch(
                 [dataset[index] for index in indices],
                 column_names,
             )
+            data = replace_fields(data)
+            yield data
     elif data_file.dataset_type == "safetensors":
         dataset = load_safetensors(data_file.name_or_path)
 
         for indices in batched(range(len(dataset)), n=batch_size):
-            yield _lod_to_batch(
+            data = _lod_to_batch(
                 [dataset[index] for index in indices],
                 column_names,
             )
+            data = replace_fields(data)
+            yield data
     elif data_file.dataset_type == "huggingface":
         if not is_datasets_available():
             raise ValueError("datasets is not installed")
@@ -260,7 +295,9 @@ def _batches_of_data(
             dataset = data_file.data
         size = len(dataset)
         for indices in batched(range(size), n=batch_size):
-            yield dataset[indices[0] : indices[-1]]
+            data = dataset[indices[0] : indices[-1]]
+            data = replace_fields(data)
+            yield data
     else:
         raise NotImplementedError(data_file.dataset_type)
 
@@ -407,6 +444,7 @@ def map_dict_of_files(
     multiprocessing_mode: Literal["process", "threads"] = "process",
     return_dataset_type: Literal["flattened", "safetensors"] = "flattened",
     return_mapped: Literal[False, "lazy", "in-memory"] = "in-memory",
+    progress_bar: bool = True,
 ) -> "Optional[DatasetDict]":
     dict_of_data_files = OrderedDict(
         [(k, [v] if isinstance(v, str) else v) for k, v in dict_of_data_files.items()]
@@ -438,6 +476,7 @@ def map_dict_of_files(
             multiprocessing_mode,
             return_dataset_type,
             return_mapped,
+            progress_bar,
         )
         if result is not None:
             return_dataset[split] = result
@@ -477,6 +516,7 @@ def map_files(
     multiprocessing_mode: Literal["process", "threads"] = "process",
     return_dataset_type: Literal["flattened", "safetensors"] = "flattened",
     return_mapped: Literal[False, "lazy", "in-memory"] = "in-memory",
+    progress_bar: bool = True,
 ) -> Union[
     # return_mapped == False
     None,
@@ -518,6 +558,7 @@ def map_files(
         total=total_size,
         unit=" samples",
         postfix=progress_postfix,
+        disable=not progress_bar,
     )
 
     if num_proc == 1:
@@ -642,6 +683,7 @@ def map_files(
                             pass
             finally:
                 [async_result.get(timeout=0.05) for async_result in async_results]
+                progress_bar.set_postfix(progress_postfix)
             pool.close()
             pool.join()
 
