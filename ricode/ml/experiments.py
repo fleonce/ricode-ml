@@ -33,6 +33,7 @@ from typing import (
     TypeVar,
 )
 
+import attr
 import attrs
 import typing_extensions
 from with_argparse import with_dataclass
@@ -273,7 +274,13 @@ class ExperimentWatcher(Generic[TExperimentConfig]):
 
     if is_pandas_available():
 
-        def to_dataframe(self) -> tuple[pd.DataFrame, pd.DataFrame]:
+        def to_dataframe(
+            self, keys: Sequence[str]
+        ) -> tuple[pd.DataFrame, pd.DataFrame]:
+            keys = list(keys)
+            for key in attr.fields_dict(type(self.experiment)).keys():
+                if getattr(self.experiment, key):
+                    keys = ["experiment___" + key] + keys
 
             data = {}
             for experiment in self.compute_run_info():
@@ -288,16 +295,19 @@ class ExperimentWatcher(Generic[TExperimentConfig]):
                     experiment_json = json.load(f)
 
                 metrics = copy.deepcopy(experiment_json["test_metrics"])
-                metrics["_id"] = experiment
-                for key, value in metrics.items():
+                for key, value in experiment.items():
+                    metrics["experiment___" + key] = value
+                for key in keys:
                     if key not in data:
                         data[key] = []
-                    data[key].append(value)
+                    if key not in metrics:
+                        raise ValueError(key, metrics.keys())
+                    data[key].append(metrics[key])
             return pd.DataFrame.from_dict(data)
 
     else:
 
-        def to_dataframe(self) -> NoReturn:
+        def to_dataframe(self, keys: Sequence[str]) -> NoReturn:
             raise ImportError("pandas is not installed")
 
     # @deprecated
