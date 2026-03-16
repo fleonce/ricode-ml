@@ -323,9 +323,9 @@ class _Dataset:
             # the split / data_file this index goes "into"
             index_split = 0
             for split_index, split_end_index in enumerate(cumulative_data_file_sizes):
+                index_split = split_index
                 if index < split_end_index:
                     break
-                index_split = split_index
 
             assert cumulative_data_file_sizes[index_split] > index
             assert zi_cumulative_data_file_sizes[index_split] <= index
