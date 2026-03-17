@@ -15,6 +15,7 @@ from typing import (
 )
 
 import torch
+from more_itertools import first
 from more_itertools.recipes import flatten
 from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import DataLoader, DistributedSampler, IterableDataset
@@ -329,16 +330,32 @@ class PaddingDataCollator1D:
         self.padding = padding
         self.key_order = {key: pos for pos, key in enumerate(key_order or list())}
 
-    def __call__(self, inp: list[dict[str, torch.Tensor]]) -> Batch:
-        bs = len(inp)
+    def __call__(
+        self,
+        batch: Mapping[str, list[torch.Tensor]] | Sequence[Mapping[str, torch.Tensor]],
+    ):
+        if isinstance(batch, Sequence):
+            return self.collate_sequence(batch)
+        else:
+            return self.collate_batch(batch)
+
+    def collate_sequence(self, batch: Sequence[Mapping[str, torch.Tensor]]):
+        batch_size = len(batch)
+        keys = set(flatten(m.keys() for m in batch))
+        dict_batch = {key: [batch[i][key] for i in range(batch_size)] for key in keys}
+        return self.collate_batch(dict_batch)
+
+    def collate_batch(self, in_batch: Mapping[str, list[torch.Tensor]]):
+        batch_size = len(first(in_batch.values()))
+
         batch = Batch()
-        keys = set(flatten(elem.keys() for elem in inp))
+        keys = list(batch.keys())
         if self.key_order:
             keys = list(keys)
             keys.sort(key=lambda x: self.key_order.get(x, len(self.key_order)))
 
         for key in keys:
-            tensors = [inp[i][key] for i in range(bs)]
+            tensors = in_batch[key]
             if key not in self.padding:
                 raise ValueError(f"Padding for {key!r} is undefined")
             padding_dtype, padding_value = self.padding[key]
