@@ -1,11 +1,10 @@
 import json
 from typing import Sequence
 
-import datasets
 import ijson
 
 from ricode.ml._preprocessing.data_files import DataFile, ViewDataFile
-from ricode.utils.imports import is_pyarrow_available
+from ricode.utils.imports import is_datasets_available, is_pyarrow_available
 
 
 def estimate_data_file_size(data_file: DataFile):
@@ -71,6 +70,10 @@ def expected_keys_in_data_file(data_file: DataFile) -> Sequence[str]:
     elif data_file.dataset_type == "safetensors":
         raise NotImplementedError("load metadata from safetensors and return keys")
     elif data_file.dataset_type == "huggingface":
+        if not is_datasets_available():
+            raise ValueError("datasets is not installed")
+        import datasets
+
         dataset = datasets.load_dataset(data_file.name_or_path, streaming=True)
         return dataset.column_names
 
