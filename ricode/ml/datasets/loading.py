@@ -1,9 +1,10 @@
 import os.path
+from typing import Mapping
 
 from .._preprocessing.data_files import DataFile
 from .._preprocessing.huggingface_parquet import load_datasets_dataset, load_parquet
 
-from .dataset import DataFileDataset
+from .dataset import DataFileDataset, DatasetDict
 
 __all__ = [
     "load_parquet",
@@ -22,3 +23,9 @@ def load_from_file(file_path: str) -> DataFileDataset:
             )
 
     return DataFileDataset([DataFile(file_path, "file", None)])
+
+
+def load_dict_from_files(file_paths: Mapping[str, str]) -> DatasetDict:
+    return DatasetDict(
+        {split: load_from_file(file_path) for split, file_path in file_paths.items()}
+    )
