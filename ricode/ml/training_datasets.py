@@ -594,7 +594,8 @@ class BasicDataset(Conf, Generic[TAny]):
             if num_proc is None:
                 return self._load_split0(split, split_info)
             return load_from_disk(
-                self._split_path(split, split_info, is_final=True, num_proc=num_proc)
+                self._split_path(split, split_info, is_final=True, num_proc=num_proc),
+                lazy=False,
             )
 
     def _setup_split(

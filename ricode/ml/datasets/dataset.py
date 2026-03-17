@@ -75,30 +75,11 @@ def load_from_disk(
 
     return _load_from_disk(disk_folder, dataset_info, lazy)
 
-    # elif dataset_info["type"] in {"view", "select_view"}:
-    #     data_files = [
-    #         ViewDataFile(
-    #             name_or_path=data_file["name_or_path"],
-    #             dataset_type=data_file["dataset_type"],
-    #             data=None,
-    #             indices=data_file["indices"],
-    #         )
-    #         for data_file in dataset_info["data_files"]
-    #     ]
-    #     return SelectView(None, dataset_info["indices"], data_files)
-    # else:
-    #     dataset = Dataset(
-    #         disk_folder,
-    #         dataset_info,
-    #         lazy=lazy,
-    #     )
-    #     return dataset
-
 
 def _load_from_disk(
     disk_folder: str | os.PathLike[str],
     metadata: Mapping[str, Any],
-    lazy: bool = False,
+    lazy: bool | None = None,
 ):
     if metadata["type"] in {"view", "select_view"}:
         data_files = [
@@ -120,7 +101,7 @@ def _load_from_disk(
         return Dataset(
             disk_folder,
             metadata,
-            True if lazy is None else lazy,  # make sure its a bool!
+            False if lazy is None else lazy,  # make sure its a bool!
         )
     elif metadata["type"] in {"data_files", "parquet"}:
         if lazy is None:
