@@ -80,6 +80,8 @@ def tokenize_batch(
     key: str = "content",
     input_is_pretokenized: bool = False,
     return_word_ids: bool = False,
+    return_subtoken_mask: bool = False,
+    return_special_token_mask: bool = False,
     word_id_dtype: torch.dtype | None = None,
     tokenizer_kwargs: Mapping[str, Any] | None = None,
 ):
@@ -114,15 +116,40 @@ def tokenize_batch(
     output = {"tokens": []}
     if return_word_ids:
         output["word_ids"] = []
+    if return_special_token_mask:
+        output["special_token_mask"] = []
+    if return_subtoken_mask:
+        output["subtoken_mask"] = []
 
     for i in range(len(samples)):
         skip_sample = min_length and len(samples[i] < min_length)
         if skip_sample:
             continue
 
-        output["tokens"].append(_sample_to_tensor(samples[i], tokens_dtype))
-        if return_word_ids:
+        tokens = _sample_to_tensor(samples[i], tokens_dtype)
+        output["tokens"].append(tokens)
+
+        if return_word_ids or return_subtoken_mask or return_special_token_mask:
             word_ids = tokenizer_output.word_ids(i)
-            output["word_ids"].append(word_ids_as_tensor(word_ids, word_id_dtype))
+
+            if return_word_ids:
+                word_id_tensor = word_ids_as_tensor(word_ids, word_id_dtype)
+                output["word_ids"].append(word_id_tensor)
+
+            if return_subtoken_mask:
+                subtoken_mask = torch.zeros_like(tokens, dtype=torch.bool)
+
+                last_word_id = None
+                for position, word_id in enumerate(word_ids):
+                    if word_id is not None and word_id == last_word_id:
+                        subtoken_mask[position] = True
+                output["subtoken_mask"].append(subtoken_mask)
+
+            if return_special_token_mask:
+                special_token_mask = torch.zeros_like(tokens, dtype=torch.bool)
+                for position, word_id in enumerate(word_ids):
+                    if word_id is None:
+                        special_token_mask[position] = True
+                output["special_token_mask"].append(special_token_mask)
 
     return output
