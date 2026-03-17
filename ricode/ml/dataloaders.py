@@ -15,7 +15,6 @@ from typing import (
 )
 
 import torch
-from more_itertools import first
 from more_itertools.recipes import flatten
 from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import DataLoader, DistributedSampler, IterableDataset
@@ -346,14 +345,12 @@ class PaddingDataCollator1D:
         return self.collate_batch(dict_batch)
 
     def collate_batch(self, in_batch: Mapping[str, list[torch.Tensor]]):
-        batch_size = len(first(in_batch.values()))
-
-        batch = Batch()
-        keys = list(batch.keys())
+        keys = list(in_batch.keys())
         if self.key_order:
             keys = list(keys)
             keys.sort(key=lambda x: self.key_order.get(x, len(self.key_order)))
 
+        batch = Batch()
         for key in keys:
             tensors = in_batch[key]
             if key not in self.padding:
