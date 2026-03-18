@@ -2,6 +2,7 @@ import warnings
 from typing import Mapping, Optional, Sequence
 
 import torch
+from transformers import PreTrainedTokenizerBase
 
 from ricode.ml._metrics import Span
 from ricode.ml._preprocessing.bio import JsonEntity
@@ -43,6 +44,7 @@ def token_labels_to_spans(
     original_text: str | None,
     id2label: Mapping[int, str],
     ignore_index: int = -100,
+    tokenizer: Optional[PreTrainedTokenizerBase] = None,
 ) -> Sequence[Span]:
     if labels.dim() != 1:
         raise ValueError(labels.shape)
@@ -92,8 +94,12 @@ def token_labels_to_spans(
         if original_text is not None:
             raise NotImplementedError(offset_mapping)
         else:
+            tokens_or_text = tuple(input_ids[entity["start"] : entity["end"]])
+            if tokenizer is not None:
+                tokens_or_text = tokenizer.decode(tokens_or_text)
+
             span = Span(
-                tokens_or_text=tuple(input_ids[entity["start"] : entity["end"]]),
+                tokens_or_text=tokens_or_text,
                 type=entity["type"],
                 position=(word_ids[entity["start"]], word_ids[entity["end"] - 1]),
             )
