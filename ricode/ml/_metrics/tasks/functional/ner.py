@@ -104,7 +104,7 @@ def token_labels_to_spans(
     num_begin_tags = 0
     index = 0
     for index, token in enumerate(input_ids):
-        tag = labels[index].item()
+        tag = labels[index]
         is_subtoken = bool(subtoken_mask[index] if subtoken_mask is not None else False)
         if is_subtoken:
             continue
