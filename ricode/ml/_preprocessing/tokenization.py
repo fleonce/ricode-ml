@@ -143,6 +143,7 @@ def tokenize_batch(
                 for position, word_id in enumerate(word_ids):
                     if word_id is not None and word_id == last_word_id:
                         subtoken_mask[position] = True
+                    last_word_id = None
                 output["subtoken_mask"].append(subtoken_mask)
 
             if return_special_token_mask:
