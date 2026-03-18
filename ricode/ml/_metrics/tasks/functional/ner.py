@@ -152,7 +152,7 @@ def token_labels_to_spans(
             {
                 "type": raise_if_none(current_label),
                 "start": start_index,
-                "end": index + 1,
+                "end": index,
             }
         )
 
