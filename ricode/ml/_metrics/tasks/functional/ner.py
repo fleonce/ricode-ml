@@ -95,7 +95,7 @@ def token_labels_to_spans(
             span = Span(
                 tokens_or_text=tuple(input_ids[entity["start"] : entity["end"]]),
                 type=entity["type"],
-                position=(word_ids[entity["start"]], word_ids[entity["end"]]),
+                position=(word_ids[entity["start"]], word_ids[entity["end"] - 1]),
             )
         spans.append(span)
 
