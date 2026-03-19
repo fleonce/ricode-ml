@@ -138,7 +138,8 @@ def token_labels_to_spans(
             if tag_type == "I" and not current_label:
                 if do_warn:
                     warnings.warn(
-                        f"Entity in sample {index} starts with a I- tag, beware"
+                        f"Entity in sample {index} starts with a I- tag, beware",
+                        stacklevel=2,
                     )
 
             if current_label and (tag_category != current_label or tag_type == "B"):
