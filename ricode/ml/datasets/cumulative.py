@@ -76,7 +76,7 @@ class FlattenedDataset:
         self.bins = bins
         self.max_binsize = max_binsize
         self.binsizes = binsizes
-        self.binsize_hints = binsize_hints
+        self.binsize_hints = binsize_hints or {}
 
     @property
     def device(self) -> torch.device:
