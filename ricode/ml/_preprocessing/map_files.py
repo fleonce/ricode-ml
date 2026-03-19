@@ -39,7 +39,7 @@ from safetensors_dataset import load_safetensors, SafetensorsDataset
 from tqdm import tqdm
 
 from ricode.ml._preprocessing.utils import estimate_data_file_size
-from ricode.ml.datasets.cumulative import CumulativeDataset
+from ricode.ml.datasets.cumulative import FlattenedDataset
 from ricode.ml.datasets.dataset import (
     DataFile,
     Dataset,
@@ -264,7 +264,7 @@ def _batches_of_data(
         else:
             raise NotImplementedError("Unknown extension of file " + repr(data_file))
     elif data_file.dataset_type == "flattened":
-        dataset = CumulativeDataset.from_preprocessed(data_file.name_or_path)
+        dataset = FlattenedDataset.from_preprocessed(data_file.name_or_path)
 
         for indices in batched(range(len(dataset)), n=batch_size):
             data = _lod_to_batch(
@@ -332,7 +332,7 @@ def _map_data_file(
 
         if dataset_type == "flattened":
             if dataset is None:
-                dataset = CumulativeDataset.new_empty(
+                dataset = FlattenedDataset.new_empty(
                     {column_name: 2**20 for column_name in result.keys()}
                 )
             for sample in range(result_batch_size):

@@ -14,7 +14,7 @@ from ricode.ml._preprocessing.utils import (
     expected_keys_in_data_file,
 )
 from ricode.ml.datasets.concatenated import ConcatenatedDataset, cumulative_sum
-from ricode.ml.datasets.cumulative import CumulativeDataset
+from ricode.ml.datasets.cumulative import FlattenedDataset
 from ricode.ml.training_utils import cached_property
 from ricode.utils.imports import is_pyarrow_available
 from ricode.utils.mappings import inverse
@@ -395,7 +395,7 @@ class Dataset(_Dataset):
         if self.dataset_type == "flattened":
             if not self.lazy:
                 datasets = [
-                    CumulativeDataset.from_preprocessed(
+                    FlattenedDataset.from_preprocessed(
                         os.path.join(name_or_path, data_file),
                     )
                     for data_file in tqdm(

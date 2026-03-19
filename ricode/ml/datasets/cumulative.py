@@ -3,7 +3,7 @@ import os
 import pathlib
 import typing
 from collections import OrderedDict
-from typing import Mapping, MutableMapping, Optional, Sequence
+from typing import Mapping, MutableMapping, Optional, Sequence, TypeAlias
 
 import numpy as np
 import safetensors.torch
@@ -22,7 +22,7 @@ def dtype_for_list(values: Sequence[float] | Sequence[int]):
     return torch.int32
 
 
-class CumulativeDataset:
+class FlattenedDataset:
     @classmethod
     def from_preprocessed(cls, name_or_path: str | os.PathLike):
         tensors = safetensors.torch.load_file(
@@ -92,10 +92,10 @@ class CumulativeDataset:
         return self.binsizes[key]
 
     @typing.overload
-    def to(self, device: int | str | torch.device) -> "CumulativeDataset": ...
+    def to(self, device: int | str | torch.device) -> "FlattenedDataset": ...
 
     @typing.overload
-    def to(self, key: str, dtype: torch.dtype) -> "CumulativeDataset": ...
+    def to(self, key: str, dtype: torch.dtype) -> "FlattenedDataset": ...
 
     def to(
         self,
@@ -105,7 +105,7 @@ class CumulativeDataset:
         if dtype is not None:
             assert isinstance(device_or_key, str)
             assert isinstance(dtype, torch.dtype)
-            return CumulativeDataset(
+            return FlattenedDataset(
                 {
                     key: (
                         value if not key.startswith(device_or_key) else value.to(dtype)
@@ -117,7 +117,7 @@ class CumulativeDataset:
                 self.binsize_hints,
             )
         else:
-            return CumulativeDataset(
+            return FlattenedDataset(
                 {key: value.to(device_or_key) for key, value in self.tensors.items()},
                 self.cumulative_lengths,
                 self.binsizes,
@@ -321,14 +321,17 @@ class CumulativeDataset:
         )
 
 
-class FlattenedDatasetDict(dict[str, CumulativeDataset]):
+class FlattenedDatasetDict(dict[str, FlattenedDataset]):
     @classmethod
     def from_pretrained(cls, name_or_path: str | os.PathLike):
         return cls(
             {
-                split: CumulativeDataset.from_preprocessed(
+                split: FlattenedDataset.from_preprocessed(
                     os.path.join(name_or_path, split)
                 )
                 for split in {"eval", "test", "train"}
             }
         )
+
+
+CumulativeDataset: TypeAlias = FlattenedDataset

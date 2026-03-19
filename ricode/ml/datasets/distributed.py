@@ -6,7 +6,7 @@ from typing import Any, Mapping
 from tqdm import tqdm
 
 from ricode.ml.datasets.concatenated import ConcatenatedDataset
-from ricode.ml.datasets.cumulative import CumulativeDataset
+from ricode.ml.datasets.cumulative import FlattenedDataset
 
 
 class DistributedDataset:
@@ -32,7 +32,7 @@ class DistributedDataset:
 
         if self.dataset_type == "cumulative":
             datasets = [
-                CumulativeDataset.from_preprocessed(data_file)
+                FlattenedDataset.from_preprocessed(data_file)
                 for data_file in tqdm(self.data_files, desc="Loading shards")
             ]
         else:
