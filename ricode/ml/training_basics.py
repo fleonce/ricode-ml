@@ -803,6 +803,14 @@ class Batch(dict[str, Tensor]):
         copy[new_key] = value
         return copy
 
+    @property
+    def shape(self) -> tuple[tuple[str, torch.Size], ...]:
+        out = ()
+        for key, possibly_tensor in self.items():
+            if isinstance(possibly_tensor, Tensor):
+                out = out + ((key, possibly_tensor.shape),)
+        return out
+
     def __copy__(self):
         return Batch(self)
 
