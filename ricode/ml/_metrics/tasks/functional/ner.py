@@ -45,6 +45,7 @@ def token_labels_to_spans(
     id2label: Mapping[int, str],
     ignore_index: int = -100,
     tokenizer: Optional[PreTrainedTokenizerBase] = None,
+    do_warn: bool = True,
 ) -> Sequence[Span]:
     if labels.dim() != 1:
         raise ValueError(labels.shape)
@@ -135,7 +136,10 @@ def token_labels_to_spans(
                 # count how many entities are found, used as verification later
                 num_begin_tags += 1
             if tag_type == "I" and not current_label:
-                warnings.warn(f"Entity in sample {index} starts with a I- tag, beware")
+                if do_warn:
+                    warnings.warn(
+                        f"Entity in sample {index} starts with a I- tag, beware"
+                    )
 
             if current_label and (tag_category != current_label or tag_type == "B"):
                 finish_entity(
