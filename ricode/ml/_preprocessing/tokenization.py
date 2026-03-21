@@ -1,7 +1,7 @@
 import functools
 import math
 from collections import OrderedDict
-from typing import Any, Mapping, MutableMapping
+from typing import Any, Literal, Mapping, MutableMapping
 
 import numpy as np
 import torch
@@ -84,6 +84,7 @@ def tokenize_batch(
     return_special_token_mask: bool = False,
     word_id_dtype: torch.dtype | None = None,
     tokenizer_kwargs: Mapping[str, Any] | None = None,
+    return_dtype: Literal["pt", "native"] = "pt",
 ):
     if not tokenizer_kwargs:
         tokenizer_kwargs = {}
@@ -126,31 +127,42 @@ def tokenize_batch(
         if skip_sample:
             continue
 
-        tokens = _sample_to_tensor(samples[i], tokens_dtype)
+        if return_dtype == "pt":
+            tokens = _sample_to_tensor(samples[i], tokens_dtype)
+        else:
+            tokens = samples[i]
         output["tokens"].append(tokens)
 
         if return_word_ids or return_subtoken_mask or return_special_token_mask:
             word_ids = tokenizer_output.word_ids(i)
 
             if return_word_ids:
-                word_id_tensor = word_ids_as_tensor(word_ids, word_id_dtype)
-                output["word_ids"].append(word_id_tensor)
+                if return_dtype == "pt":
+                    word_id_tensor = word_ids_as_tensor(word_ids, word_id_dtype)
+                    output["word_ids"].append(word_id_tensor)
+                else:
+                    output["word_ids"].append(word_ids)
 
             if return_subtoken_mask:
-                subtoken_mask = torch.zeros_like(tokens, dtype=torch.bool)
+                subtoken_mask = [False] * len(tokens)
 
                 last_word_id = None
                 for position, word_id in enumerate(word_ids):
                     if word_id is not None and word_id == last_word_id:
                         subtoken_mask[position] = True
                     last_word_id = word_id
+
+                if return_dtype == "pt":
+                    subtoken_mask = torch.tensor(subtoken_mask)
                 output["subtoken_mask"].append(subtoken_mask)
 
             if return_special_token_mask:
-                special_token_mask = torch.zeros_like(tokens, dtype=torch.bool)
+                special_token_mask = [False] * len(tokens)
                 for position, word_id in enumerate(word_ids):
                     if word_id is None:
                         special_token_mask[position] = True
+                if return_dtype == "pt":
+                    special_token_mask = torch.tensor(special_token_mask)
                 output["special_token_mask"].append(special_token_mask)
 
     return output

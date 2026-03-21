@@ -1,11 +1,13 @@
+import sys
 import warnings
-from typing import Mapping, Optional, Sequence
+from typing import Literal, Mapping, Optional, Sequence
 
 import torch
-from transformers import PreTrainedTokenizerBase
 
 from ricode.ml._metrics import Span
-from ricode.ml._preprocessing.bio import JsonEntity
+from ricode.ml._preprocessing.bio import JsonEntity, JsonSample
+from ricode.typing_utils.protocols import SupportsToList
+from ricode.utils.mappings import inverse
 from ricode.utils.types import raise_if_none
 
 
@@ -36,135 +38,215 @@ def batched_token_labels_to_spans(
     ]
 
 
-def token_labels_to_spans(
-    input_ids: torch.Tensor,
-    labels: torch.Tensor,
-    subtoken_mask: Optional[torch.Tensor],
-    offset_mapping: Optional[torch.Tensor],
-    original_text: str | None,
-    id2label: Mapping[int, str],
-    ignore_index: int = -100,
-    tokenizer: Optional[PreTrainedTokenizerBase] = None,
-    do_warn: bool = True,
-) -> Sequence[Span]:
-    if labels.dim() != 1:
-        raise ValueError(labels.shape)
-
-    if (original_text is not None) ^ (offset_mapping is not None):
-        raise ValueError(
-            "original_text and offset_mapping must either both be None or supplied"
-        )
-
-    word_ids = (
-        torch.arange(labels.size(0), device=labels.device)
-        if subtoken_mask is None
-        else torch.cumsum(~subtoken_mask, dim=0, dtype=torch.long)
+def bio_labels_for_entity_types(entity_types: Sequence[str]):
+    labels = (
+        ["O"]
+        + ["B-" + entity_type for entity_type in entity_types]
+        + ["I-" + entity_type for entity_type in entity_types]
     )
+    return labels
 
-    if ignore_index is not None:
-        label_mask = labels != ignore_index
 
-        word_ids = word_ids[label_mask]
-        input_ids = input_ids[label_mask]
-        labels = labels[label_mask]
-        if subtoken_mask is not None:
-            subtoken_mask = subtoken_mask[label_mask]
-        if offset_mapping is not None:
-            offset_mapping = offset_mapping[label_mask]
-    input_ids = input_ids.tolist()
-    labels = labels.tolist()
-    word_ids = word_ids.tolist()
-    if subtoken_mask is not None:
-        subtoken_mask = subtoken_mask.tolist()
-    if offset_mapping is not None:
-        offset_mapping = offset_mapping.tolist()
+def bio_id2label(entity_types: Sequence[str]) -> Mapping[int, str]:
+    return {i: k for i, k in enumerate(bio_labels_for_entity_types(entity_types))}
 
-    spans = []
 
-    def finish_entity(entity: JsonEntity):
-        if entity["type"] is None:
+def spans_to_word_labels(
+    sample: JsonSample, entity_types: Sequence[str]
+) -> Sequence[str]:
+    word_labels = ["O"] * len(sample["tokens"])
+
+    assigned_labels = set()
+    for entity in sorted(
+        sample["entities"], key=lambda e: (e["start"], e["end"] - e["start"])
+    ):
+        if entity["type"] not in entity_types:
             raise ValueError(
-                f"{list(zip(input_ids, labels))}\n"
-                f"Entity {entity} was parsed but no type was defined"
-            )
-        if entity["start"] >= entity["end"]:
-            raise ValueError(
-                f"{list(zip(input_ids, labels))}\n" f"Entity {entity} has zero length"
+                f"Unknown entity type {entity['type']} in {entity_types=!r}"
             )
 
-        if original_text is not None:
-            raise NotImplementedError(offset_mapping)
-        else:
-            tokens_or_text = tuple(input_ids[entity["start"] : entity["end"]])
-            if tokenizer is not None:
-                tokens_or_text = tokenizer.decode(tokens_or_text)
+        first = True
+        for pos in range(entity["start"], entity["end"]):
+            if pos in assigned_labels:
+                raise ValueError(
+                    f"Sample {sample} contains nested entities, cannot be represented by BIO tags"
+                )
+            assigned_labels.add(pos)
+            # todo: B only if prev. is the same tag!
+            word_labels[pos] = ("B-" if first else "I-") + entity["type"]
+            first = False
+    return word_labels
 
-            span = Span(
-                tokens_or_text=tokens_or_text,
-                type=entity["type"],
-                position=(word_ids[entity["start"]], word_ids[entity["end"] - 1]),
-            )
-        spans.append(span)
 
-    start_index = 0
-    current_label: str | None = None
-    num_begin_tags = 0
-    index = 0
-    for index, token in enumerate(input_ids):
-        tag = labels[index]
-        is_subtoken = bool(subtoken_mask[index] if subtoken_mask is not None else False)
-        if is_subtoken:
+def word_labels_to_token_labels(
+    word_labels: Sequence[str],
+    word_ids: Sequence[int | None],
+    entity_types: Sequence[str],
+):
+    label2id = inverse(bio_id2label(entity_types))
+    o_label = label2id["O"]
+
+    last_word_id = None
+    token_labels = [o_label] * len(word_ids)
+    for pos, word_id in enumerate(word_ids):
+        is_subtoken = word_id == last_word_id
+        last_word_id = word_id
+
+        if word_id is None or word_id < 0:
+            # is a special token
+            token_labels[pos] = -100
             continue
 
-        label = id2label[tag]
+        word_label = word_labels[word_id]
+        if word_label == "O":
+            continue
 
-        if label == "O":
-            if current_label:
-                finish_entity(
-                    {
-                        "start": start_index,
-                        "end": index,
-                        "type": raise_if_none(current_label),
-                    }
+        label_entity_type = word_label.split("-")[1]
+        if is_subtoken and word_label.startswith("B-"):
+            # this token is a subtoken; assign the I- tag for the label
+            token_label = label2id["I-" + label_entity_type]
+        else:
+            token_label = label2id[word_label]
+        token_labels[pos] = token_label
+
+        last_word_id = word_id
+    return token_labels
+
+
+def spans_to_token_labels(
+    sample: JsonSample,
+    word_ids: Sequence[int | None] | SupportsToList,
+    entity_types: Sequence[str],
+):
+    word_labels = spans_to_word_labels(sample, entity_types)
+    return word_labels_to_token_labels(word_labels, word_ids, entity_types)
+
+
+def _replace_none_with_neginf(word_ids: Sequence[int | None]) -> Sequence[int]:
+    return [w if w is not None else -sys.maxsize for w in word_ids]
+
+
+def token_labels_to_word_labels(
+    labels: Sequence[int],
+    word_ids: Sequence[int | None],
+    entity_types: Sequence[str],
+):
+    if len(labels) != len(word_ids):
+        raise ValueError(
+            f"labels and word_ids must be of the same size, got {len(labels)=} vs {len(word_ids)=}"
+        )
+
+    id2label = bio_id2label(entity_types)
+
+    num_words = max(word_ids, key=lambda w: 0 if w is None else w)
+    word_labels = ["O"] * (num_words + 1)
+    last_word_id = None
+    for label, word_id in zip(labels, word_ids):
+        if word_id is None or word_id < 0:
+            # special token, ignore
+            continue
+
+        is_subtoken = last_word_id == word_id
+        last_word_id = word_id
+
+        if is_subtoken:
+            # subtoken, assign the label from the primary token for this word_id
+            continue
+        word_labels[word_id] = id2label[label]
+    return word_labels
+
+
+def word_labels_to_spans(
+    word_labels: Sequence[str],
+    entity_types: Sequence[str],
+    error_handling: Literal["ignore", "warning", "error"] = "error",
+) -> Sequence[JsonEntity]:
+    current_start = -1
+    current_type = None
+
+    result = []
+    index = 0
+    begin_tags = 0
+    for index, word_label in enumerate(word_labels):
+        if word_label == "O":
+            if current_type:
+                if current_start < 0:
+                    raise ValueError(f"Invalid decoding state: {current_start=!r}")
+                result.append(
+                    JsonEntity(
+                        start=current_start,
+                        end=index,
+                        type=raise_if_none(current_type),
+                    )
                 )
                 # reset the category
-                current_label = None
+                current_type = None
+                current_start = -1
         else:
-            tag_category = label.split("-")[1]
-            tag_type = label.split("-")[0]
+            tag_entity_type = word_label.split("-")[1]
+            if tag_entity_type not in entity_types:
+                raise ValueError(
+                    f"Unknown entity type {tag_entity_type!r}, list of known entity types is {entity_types!r}"
+                )
+
+            tag_type = word_label.split("-")[0]
             if tag_type == "B":
                 # count how many entities are found, used as verification later
-                num_begin_tags += 1
-            if tag_type == "I" and not current_label:
-                if do_warn:
+                begin_tags += 1
+            if tag_type == "I" and current_type is None:
+                if error_handling == "error":
+                    raise ValueError(
+                        f"Invalid sequence of word labels, starting entity with an inside tag {word_label!r}: {word_labels}"
+                    )
+                elif error_handling == "warning":
                     warnings.warn(
-                        f"Entity in sample {index} starts with a I- tag, beware",
+                        f"Invalid sequence of word labels, starting entity with an inside tag {word_label!r}: {word_labels}",
                         stacklevel=2,
                     )
 
-            if current_label and (tag_category != current_label or tag_type == "B"):
-                finish_entity(
-                    {
-                        "type": raise_if_none(current_label),
-                        "start": start_index,
-                        "end": index,
-                    }
+            if current_type is not None and (
+                tag_entity_type != current_type or tag_type == "B"
+            ):
+                if current_start < 0:
+                    raise ValueError(f"Invalid decoding state: {current_start=!r}")
+                result.append(
+                    JsonEntity(
+                        start=current_start,
+                        end=index,
+                        type=raise_if_none(current_type),
+                    )
                 )
                 # reset the category
-                current_label = None
-            if not current_label:
-                start_index = index
-            current_label = tag_category
-        index += 1
+                current_type = None
+            if current_type is None:
+                current_start = index
+            current_type = tag_entity_type
 
     # check for leftover entities
-    if current_label:
-        finish_entity(
-            {
-                "type": raise_if_none(current_label),
-                "start": start_index,
-                "end": index,
-            }
+    if current_type is not None:
+        if current_start < 0:
+            raise ValueError(f"Invalid decoding state: {current_start=!r}")
+        result.append(
+            JsonEntity(
+                start=current_start,
+                end=index + 1,
+                type=raise_if_none(current_type),
+            )
         )
+    return result
 
+
+def token_labels_to_spans(
+    labels: torch.Tensor,
+    word_ids: torch.Tensor,
+    entity_types: Sequence[str],
+    error_handling: Literal["ignore", "warning", "error"] = "error",
+) -> Sequence[JsonEntity]:
+    word_labels = token_labels_to_word_labels(
+        labels,
+        word_ids,
+        entity_types,
+    )
+
+    spans = word_labels_to_spans(word_labels, entity_types, error_handling)
     return spans
