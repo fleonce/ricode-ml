@@ -1,5 +1,5 @@
 import warnings
-from typing import Mapping, Optional, Sequence, TypedDict
+from typing import Any, Mapping, Optional, Sequence, TypedDict
 
 from tqdm import tqdm
 
@@ -20,6 +20,18 @@ class BIOSample(TypedDict):
 class JsonSample(TypedDict):
     tokens: Sequence[str]
     entities: Sequence[JsonEntity]
+
+
+def is_json_entity(x: Any):
+    if not isinstance(x, Mapping):
+        return False
+    elif any(key not in x for key in {"start", "end", "type"}):
+        return False
+    return (
+        isinstance(x["start"], int)
+        and isinstance(x["end"], int)
+        and isinstance(x["type"], str)
+    )
 
 
 def bio_to_json(
