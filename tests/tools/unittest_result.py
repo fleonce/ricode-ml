@@ -12,11 +12,11 @@ class SubtestCountingTestResult(unittest.TextTestResult):
         super(SubtestCountingTestResult, self).addSubTest(test, subtest, outcome)
         # add to total number of tests run
         if hasattr(subtest, "_subDescription"):
-            if hasattr(self, "___subtest"):
+            if hasattr(self, "___subtest") and test.id() in getattr(self, "___subtest"):
                 self.testsRun += 1
             else:
                 self.stream.write("\n")
-                setattr(self, "___subtest", None)
+                setattr(self, "___subtest", {test.id()})
 
             if self.showAll:
                 self.stream.write("\t\t")
