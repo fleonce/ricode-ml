@@ -4,7 +4,7 @@ from typing import Any, Generator
 import pyjson5
 
 
-def iterate_json_file_type(file_path: str) -> Generator[Any]:
+def iterate_json_file_type(file_path: str) -> Generator[Any, None, None]:
     with open(file_path, "r") as f:
         if file_path.endswith(".jsonl"):
             while line := f.readline():
