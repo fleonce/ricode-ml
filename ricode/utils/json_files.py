@@ -41,5 +41,6 @@ def iterate_write_with_tempfile(
     with tempfile.NamedTemporaryFile("w", delete=False) as out_f, tqdm(desc=desc) as tq:
         for element in fn(**fn_kwargs):
             out_f.write(json.dumps(element) + "\n")
+            tq.update()
         out_f.close()
         shutil.copyfile(out_f.name, output_path)
