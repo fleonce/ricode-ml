@@ -237,11 +237,16 @@ def word_labels_to_spans(
 
 
 def token_labels_to_spans(
-    labels: torch.Tensor,
-    word_ids: torch.Tensor,
+    labels: torch.Tensor | Sequence[int],
+    word_ids: torch.Tensor | Sequence[int],
     entity_types: Sequence[str],
     error_handling: Literal["ignore", "warning", "error"] = "error",
 ) -> Sequence[JsonEntity]:
+    if not isinstance(labels, list) and hasattr(labels, "tolist"):
+        labels = labels.tolist()
+    if not isinstance(word_ids, list) and hasattr(word_ids, "tolist"):
+        word_ids = word_ids.tolist()
+
     word_labels = token_labels_to_word_labels(
         labels,
         word_ids,
