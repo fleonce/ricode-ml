@@ -152,7 +152,7 @@ def token_labels_to_word_labels(
         if is_subtoken:
             # subtoken, assign the label from the primary token for this word_id
             continue
-        word_labels[word_id] = id2label[label]
+        word_labels[word_id] = id2label[int(label)]
     return word_labels
 
 
