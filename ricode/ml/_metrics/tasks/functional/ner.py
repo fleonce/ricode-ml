@@ -5,6 +5,7 @@ from typing import Literal, Mapping, Optional, Sequence
 import torch
 
 from ricode.ml._metrics import Span
+from ricode.ml._metrics.tasks.ner import NamedEntity
 from ricode.ml._preprocessing.bio import JsonEntity, JsonSample
 from ricode.typing_utils.protocols import SupportsToList
 from ricode.utils.mappings import inverse
@@ -160,7 +161,8 @@ def word_labels_to_spans(
     word_labels: Sequence[str],
     entity_types: Sequence[str],
     error_handling: Literal["ignore", "warning", "error"] = "error",
-) -> Sequence[JsonEntity]:
+    return_frozen: bool = False,
+) -> Sequence[JsonEntity] | Sequence[NamedEntity]:
     current_start = -1
     current_type = None
 
@@ -233,6 +235,10 @@ def word_labels_to_spans(
                 type=raise_if_none(current_type),
             )
         )
+
+    if return_frozen:
+        result = [NamedEntity(**elem) for elem in result]
+
     return result
 
 
@@ -241,6 +247,7 @@ def token_labels_to_spans(
     word_ids: torch.Tensor | Sequence[int],
     entity_types: Sequence[str],
     error_handling: Literal["ignore", "warning", "error"] = "error",
+    return_frozen: bool = False,
 ) -> Sequence[JsonEntity]:
     if not isinstance(labels, list) and hasattr(labels, "tolist"):
         labels = labels.tolist()
@@ -253,5 +260,7 @@ def token_labels_to_spans(
         entity_types,
     )
 
-    spans = word_labels_to_spans(word_labels, entity_types, error_handling)
+    spans = word_labels_to_spans(
+        word_labels, entity_types, error_handling, return_frozen
+    )
     return spans

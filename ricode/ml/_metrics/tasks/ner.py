@@ -61,6 +61,13 @@ class Span(SupportsGetItemDataclass):
         return Span(self.tokens_or_text, new_type, self.position)
 
 
+@dataclasses.dataclass(frozen=True)
+class NamedEntity(SupportsGetItemDataclass):
+    start: int
+    end: int
+    type: str
+
+
 # TODO: what do we do with these two classes?
 @dataclasses.dataclass(frozen=True)
 class TokenizedSpan(Span):
