@@ -21,6 +21,7 @@ NUM_BYTES_TO_DTYPE = {
 }
 
 
+@functools.lru_cache
 def dtype_for_tokenizer(tokenizer: PreTrainedTokenizerBase):
     return _dtype_for_tokenizer(tokenizer.name_or_path, len(tokenizer))
 
