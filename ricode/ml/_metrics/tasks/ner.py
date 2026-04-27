@@ -66,6 +66,7 @@ class NamedEntity(SupportsGetItemDataclass):
     start: int
     end: int
     type: str
+    text: str
 
 
 # TODO: what do we do with these two classes?
@@ -173,7 +174,7 @@ def _ner_score_check_element(
     position_aware: bool,
     strict: bool,
 ) -> PositionalEntity | NonPositionalEntity:
-    if position_aware:
+    if position_aware and not isinstance(element, NamedEntity):
         if not isinstance(element, (tuple, Span)) or len(element) < 3:
             raise ValueError(
                 f"Element must be a tuple ((start, stop), type, [tokens]), got {element!r}"
@@ -181,6 +182,16 @@ def _ner_score_check_element(
         tokens = _is_tuple_of_tokens_or_str(element[0], "[tokens]")
         typ = _is_str(element[1], "type")
         pos = _is_tuple_of_two_ints(element[2], "(start, stop)")
+    elif position_aware:  # and isinstance(element, NamedEntity)
+        tokens = element.text
+        typ = element.type
+        pos = element.start, element.end
+    elif isinstance(
+        element, NamedEntity
+    ):  # not position aware, isinstance(element, NamedEntity)
+        tokens = element.text
+        typ = element.type
+        pos = None
     else:
         if not isinstance(element, (tuple, Span)) or len(element) != 3:
             raise ValueError(element, "must be a tuple ([tokens], type, None)")

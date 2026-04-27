@@ -264,3 +264,30 @@ def token_labels_to_spans(
         word_labels, entity_types, error_handling, return_frozen
     )
     return spans
+
+
+def spans_to_named_entities(
+    spans: Sequence[JsonEntity], words: Sequence[str]
+) -> Sequence[NamedEntity]:
+    return [
+        NamedEntity(
+            span["start"],
+            span["end"],
+            span["type"],
+            " ".join(words[span["start"] : span["end"]]),
+        )
+        for span in spans
+    ]
+
+
+def named_entities_to_spans(
+    named_entities: Sequence[NamedEntity],
+) -> Sequence[JsonEntity]:
+    return [
+        JsonEntity(
+            start=entity.start,
+            end=entity.end,
+            type=entity.type,
+        )
+        for entity in named_entities
+    ]

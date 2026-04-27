@@ -114,10 +114,16 @@ class SupportsGetItemDataclass(DataclassInstance):
             raise ValueError("Must be a dataclass instance")
         return dataclass_fields(self)
 
-    def __getitem__(self, item: int | slice):
-        if not isinstance(item, (int, slice)):
-            raise ValueError(f"item must be a int | slice, got {type(item)}")
+    def __getitem__(self, item: str | int | slice):
+        if not isinstance(item, (int, slice, str)):
+            raise ValueError(f"item must be str | int | slice, got {type(item)}")
         fields = self._dataclass_fields()
+        if isinstance(item, str):
+            if item not in {field.name for field in fields}:
+                raise ValueError(
+                    f"Class {self.__class__.__name__} has no field named {item!r}"
+                )
+            return getattr(self, item)
         field_or_fields_in_question = fields[item]
         if isinstance(item, slice):
             return tuple(
