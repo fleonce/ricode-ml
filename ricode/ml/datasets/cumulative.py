@@ -190,9 +190,10 @@ class FlattenedDataset:
                 try:
                     out = self.__py_getitem__for_key(key, item)
                 except Exception as error:
-                    raise ValueError(
-                        f"Could not retrieve py item {item!r} for key {key!r}"
-                    ) from error
+                    raise error
+                    # raise ValueError(
+                    #    f"Could not retrieve py item {item!r} for key {key!r}"
+                    # ) from error
             else:
                 try:
                     out = self.__getitem__for_key(key, item)
@@ -290,6 +291,9 @@ class FlattenedDataset:
         self,
         key: str,
     ):
+        if len(self.py_bins[key]) > 0:
+            for bin in self.py_bins[key].values():
+                assert len(bin) == PY_BINSIZE
         index = len(self.py_bins[key])
         new_bin = []
         self.py_bins[key][index] = new_bin
@@ -373,16 +377,17 @@ class FlattenedDataset:
             last_bin[active_position : active_position + this_sequence_length] = l
         else:
             items_in_last_bin = binsize - active_position
-            last_bin[items_in_last_bin:] = l[:items_in_last_bin]
+            last_bin[active_position:binsize] = l[:items_in_last_bin]
             remainder = l[items_in_last_bin:]
             while len(remainder) > 0:
+                assert len(last_bin) == PY_BINSIZE
                 self._new_py_bin(key)
                 last_bin = bins[len(bins) - 1]
                 if len(remainder) >= binsize:
                     last_bin[:] = remainder[:binsize]
                     remainder = remainder[binsize:]
                 else:
-                    last_bin[: len(remainder)] = remainder
+                    last_bin[0 : len(remainder)] = remainder
                     remainder = []
         cumulative_lengths.append(cumulative_lengths[-1] + this_sequence_length)
 
