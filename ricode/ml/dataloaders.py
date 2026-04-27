@@ -323,7 +323,7 @@ def _stack_tensors_with_padding(
 class PaddingDataCollator1D:
     def __init__(
         self,
-        padding: Mapping[str, tuple[torch.dtype, int | float]],
+        padding: Mapping[str, tuple[torch.dtype, int | float] | Literal["native"]],
         key_order: Optional[list[str]] = None,
     ):
         self.padding = padding
