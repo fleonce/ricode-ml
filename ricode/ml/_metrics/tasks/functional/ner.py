@@ -263,6 +263,17 @@ def token_labels_to_spans(
     return spans
 
 
+def token_labels_to_named_entities(
+    words: Sequence[str],
+    labels: torch.Tensor | Sequence[int],
+    word_ids: torch.Tensor | Sequence[int],
+    entity_types: Sequence[str],
+    error_handling: Literal["ignore", "warning", "error"] = "error",
+) -> Sequence[NamedEntity]:
+    spans = token_labels_to_spans(labels, word_ids, entity_types, error_handling)
+    return spans_to_named_entities(spans, words)
+
+
 def spans_to_named_entities(
     spans: Sequence[JsonEntity], words: Sequence[str]
 ) -> Sequence[NamedEntity]:
