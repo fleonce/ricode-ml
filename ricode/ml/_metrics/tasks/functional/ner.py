@@ -161,8 +161,7 @@ def word_labels_to_spans(
     word_labels: Sequence[str],
     entity_types: Sequence[str],
     error_handling: Literal["ignore", "warning", "error"] = "error",
-    return_frozen: bool = False,
-) -> Sequence[JsonEntity] | Sequence[NamedEntity]:
+) -> Sequence[JsonEntity]:
     current_start = -1
     current_type = None
 
@@ -236,9 +235,6 @@ def word_labels_to_spans(
             )
         )
 
-    if return_frozen:
-        result = [NamedEntity(**elem) for elem in result]
-
     return result
 
 
@@ -247,7 +243,6 @@ def token_labels_to_spans(
     word_ids: torch.Tensor | Sequence[int],
     entity_types: Sequence[str],
     error_handling: Literal["ignore", "warning", "error"] = "error",
-    return_frozen: bool = False,
 ) -> Sequence[JsonEntity]:
     if not isinstance(labels, list) and hasattr(labels, "tolist"):
         labels = labels.tolist()
@@ -261,7 +256,9 @@ def token_labels_to_spans(
     )
 
     spans = word_labels_to_spans(
-        word_labels, entity_types, error_handling, return_frozen
+        word_labels,
+        entity_types,
+        error_handling,
     )
     return spans
 
