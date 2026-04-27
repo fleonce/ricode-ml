@@ -226,7 +226,7 @@ class FlattenedDataset:
                 for bin_intermediate in range(bin_start + 1, bin_end):
                     parts.append(bins[bin_intermediate])
             parts.append(bins[bin_end][: end % binsize])
-            value = flatten(parts)
+            value = list(flatten(parts))
 
         assert len(value) == (end - start)
         return value
@@ -372,16 +372,18 @@ class FlattenedDataset:
         if not must_split:
             last_bin[active_position : active_position + this_sequence_length] = l
         else:
-            items_in_last_bin = binsize - (new_position % binsize)
+            items_in_last_bin = binsize - active_position
             last_bin[items_in_last_bin:] = l[:items_in_last_bin]
             remainder = l[items_in_last_bin:]
             while len(remainder) > 0:
                 self._new_py_bin(key)
                 last_bin = bins[len(bins) - 1]
                 if len(remainder) >= binsize:
-                    last_bin[:] = l[:binsize]
+                    last_bin[:] = remainder[:binsize]
+                    remainder = remainder[binsize:]
                 else:
-                    last_bin[: len(remainder)] = l
+                    last_bin[: len(remainder)] = remainder
+                    remainder = []
         cumulative_lengths.append(cumulative_lengths[-1] + this_sequence_length)
 
     def _append(
