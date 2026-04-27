@@ -187,9 +187,19 @@ class FlattenedDataset:
         result = {}
         for key in self.keys:
             if self._is_py(key):
-                out = self.__py_getitem__for_key(key, item)
+                try:
+                    out = self.__py_getitem__for_key(key, item)
+                except Exception as error:
+                    raise ValueError(
+                        f"Could not retrieve py item {item!r} for key {key!r}"
+                    ) from error
             else:
-                out = self.__getitem__for_key(key, item)
+                try:
+                    out = self.__getitem__for_key(key, item)
+                except Exception as error:
+                    raise ValueError(
+                        f"Could not retrieve item {item!r} for key {key!r}"
+                    ) from error
             result[key] = out
         return result
 
