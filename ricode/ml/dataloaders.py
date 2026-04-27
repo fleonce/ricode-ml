@@ -355,11 +355,16 @@ class PaddingDataCollator1D:
             tensors = in_batch[key]
             if key not in self.padding:
                 raise ValueError(f"Padding for {key!r} is undefined")
-            padding_dtype, padding_value = self.padding[key]
+            if self.padding[key] == "native":
+                batch[key] = tensors
+            else:
+                padding_dtype, padding_value = self.padding[key]
 
-            stacked = _stack_tensors_with_padding(key, tensors, batch, padding_value)
-            stacked = stacked.to(padding_dtype)
-            batch[key] = stacked
+                stacked = _stack_tensors_with_padding(
+                    key, tensors, batch, padding_value
+                )
+                stacked = stacked.to(padding_dtype)
+                batch[key] = stacked
 
         # only create the mask if it was explicitly "asked for" in the sense of
         # a padding value being defined for it
