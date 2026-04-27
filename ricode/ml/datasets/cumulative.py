@@ -112,7 +112,7 @@ class FlattenedDataset:
 
         self.bins = _separate_into_bins(tensors)
         for name, ts in self.bins.items():
-            binsizes[name] = len(first(self.bins.values()))
+            binsizes[name] = len(first(ts.values()))
         self.py_bins = _separate_into_bins(objects)
         self.py_keys = self.keys - set(self.bins.keys())
 
@@ -187,10 +187,10 @@ class FlattenedDataset:
         result = {}
         for key in self.keys:
             if self._is_py(key):
-                item = self.__py_getitem__for_key(key, item)
+                out = self.__py_getitem__for_key(key, item)
             else:
-                item = self.__getitem__for_key(key, item)
-            result[key] = item
+                out = self.__getitem__for_key(key, item)
+            result[key] = out
         return result
 
     def __py_getitem__for_key(self, key: str, item: int) -> Sequence[Any]:
@@ -235,6 +235,7 @@ class FlattenedDataset:
             # quick: we found an element inside a single bin
             tensor = bins[bin_start][start % binsize : end % binsize]
         else:
+            pass
             parts = [
                 # the first part
                 bins[bin_start][start % binsize :],
