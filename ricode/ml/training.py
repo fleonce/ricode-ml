@@ -1074,7 +1074,9 @@ def do_train(
             stats = torch.zeros(10, device=device)
             stop_after_epoch = False
             for cpu_batch in dataloader:
-                batch_size = first(cpu_batch.values()).size(0)
+                batch_size = len(
+                    cpu_batch.values()
+                )  # supports lists, too, instead of .size(0)
 
                 # (1) move the batch to the desired device, non-blocking if possible
                 batch = cpu_batch.to(device, non_blocking=None)
