@@ -36,7 +36,31 @@ DEFAULT_SAMPLES = (
             JsonEntity(start=1, end=6, type=ENTITY_TYPES[1]),
         ],
     ),
+    JsonSample(
+        tokens=[
+            "Composer",
+            "Thomas",
+            "is",
+            "a",
+            "native",
+            "of",
+            "Chisholm",
+            ",",
+            "Minn",
+            ".",
+        ],
+        entities=[
+            JsonEntity(start=1, end=2, type="PER"),
+            JsonEntity(start=6, end=7, type="LOC"),
+            JsonEntity(start=8, end=10, type="LOC"),
+        ],
+    ),
 )
+DEFAULT_BIO_TAGS = [
+    ["B-PER", "O", "O", "O", "B-LOC", "I-LOC"],
+    ["B-PER", "B-LOC", "I-LOC", "I-LOC", "I-LOC", "I-LOC"],
+    ["O", "B-PER", "O", "O", "O", "O", "B-LOC", "O", "B-LOC", "I-LOC"],
+]
 OVERLAPPING_SAMPLES = (
     JsonSample(
         tokens=["Bob", "is", "going", "to", "San", "Marzano"],
@@ -107,16 +131,14 @@ class BioConversionTestCase(unittest.TestCase):
         spans = word_labels_to_spans(word_level_tags, ENTITY_TYPES, "error")
         self.assertEqual(spans, sample["entities"])
 
-    @foreach(tokenizer_name_or_path=DEFAULT_TOKENIZER_NAMES)
-    def test_simple_bio_conversion(self, tokenizer_name_or_path: str):
-        sample = JsonSample(
-            tokens=["Bob", "is", "going", "to", "San", "Marzano"],
-            entities=[
-                JsonEntity(start=0, end=1, type=ENTITY_TYPES[0]),
-                JsonEntity(start=4, end=6, type=ENTITY_TYPES[1]),
-            ],
-        )
-
+    @foreach(
+        tokenizer_name_or_path=DEFAULT_TOKENIZER_NAMES,
+        sample_and_bio=list(zip(DEFAULT_SAMPLES, DEFAULT_BIO_TAGS)),
+    )
+    def test_simple_bio_conversion(
+        self, tokenizer_name_or_path: str, sample_and_bio: tuple[JsonSample, list[str]]
+    ):
+        sample, bio = sample_and_bio
         tokenizer = AutoTokenizer.from_pretrained(tokenizer_name_or_path)
         encoding = tokenize_batch(
             {"tokens": [sample["tokens"]]},
@@ -137,7 +159,7 @@ class BioConversionTestCase(unittest.TestCase):
         )
 
         word_labels = token_labels_to_word_labels(token_labels, word_ids, ENTITY_TYPES)
-        self.assertEqual(word_labels, ["B-PER", "O", "O", "O", "B-LOC", "I-LOC"])
+        self.assertEqual(word_labels, bio)
 
         spans = token_labels_to_spans(
             token_labels,
