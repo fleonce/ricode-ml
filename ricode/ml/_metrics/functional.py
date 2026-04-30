@@ -26,6 +26,21 @@ def _f1_score_compute(
 ) -> tuple[Tensor, Tensor, Tensor]:
     """
     Compute precision, recall, F1
+    """
+    precision, recall, f1, _ = _f1_score_support_compute(
+        num_tp, num_fp, num_fn, average
+    )
+    return precision, recall, f1
+
+
+def _f1_score_support_compute(
+    num_tp: Tensor,
+    num_fp: Tensor,
+    num_fn: Tensor,
+    average: Literal["micro", "macro", "none"],
+) -> tuple[Tensor, Tensor, Tensor, Tensor]:
+    """
+    Compute precision, recall, F1 and support
 
     :param num_tp: TP
     :param num_fp: FP
@@ -36,11 +51,13 @@ def _f1_score_compute(
     precision = _replace_nan_with_zero(num_tp / (num_tp + num_fp))
     recall = _replace_nan_with_zero(num_tp / (num_tp + num_fn))
     f1 = _replace_nan_with_zero((2 * precision * recall) / (precision + recall))
+    support = num_tp + num_fn
     if average == "macro":
         precision = precision.mean(dim=0)
         recall = recall.mean(dim=0)
         f1 = f1.mean(dim=0)
-    return precision, recall, f1
+        # support = support.sum(dim=0)
+    return precision, recall, f1, support
 
 
 def _f1_score_flatten_batch(batched_elements: BatchedOutputs) -> Outputs:
@@ -97,6 +114,25 @@ def _f1_score_update(
         _f1_score_check_flattened_elements(targets, labels)
 
     return _f1_score_update_flattened(outputs, targets, average, labels, device)
+
+
+def _tp_fp_fn_compute(
+    outputs: Tensor,
+    targets: Tensor,
+    num_labels: int,
+    device: torch.device | None = None,
+):
+    tp_fp_fn = torch.zeros((3, num_labels), device=device, dtype=torch.long)
+
+    for o, t in zip(outputs, targets):
+        if o == t:
+            tp_fp_fn[0, o] += 1
+        else:
+            # target is missing a value
+            tp_fp_fn[2, t] += 1
+            # output was misclassified
+            tp_fp_fn[1, o] += 1
+    return tp_fp_fn[0], tp_fp_fn[1], tp_fp_fn[2]
 
 
 def _f1_score_update_flattened(

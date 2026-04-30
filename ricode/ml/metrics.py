@@ -7,6 +7,7 @@ from typing import (
     Mapping,
     Optional,
     Sequence,
+    TypeAlias,
 )
 
 import torch
@@ -19,6 +20,7 @@ from ricode.ml._metrics import ELSpan, Relation, RelationWithProbability, Span, 
 
 from ricode.ml._metrics.functional import (
     _f1_score_compute,
+    _f1_score_support_compute,
     BatchedOutputs,
     LabelGeneric,
     LabelType,
@@ -61,6 +63,8 @@ __all__ = [
     "TwoSpans",
 ]
 
+DeviceType: TypeAlias = Optional[torch.device]
+
 
 class MultiMetric:
     def __init__(self, prefix: Optional[str] = None, /, **kwargs: Metric[torch.Tensor]):
@@ -96,7 +100,7 @@ class MultiMetric:
     def sync_and_compute(self):
         prefix = self.prefix or ""
         return sync_and_compute_collection(
-            {prefix + key: metric for key, metric in self.metrics.items()}
+            {prefix + key: metric for key, metric in self.metrics.items()},
         )
 
 
@@ -128,13 +132,16 @@ class _NERScore(Metric[torch.Tensor], Generic[LabelGeneric]):
             self._add_state("num_fn", torch.tensor(0.0, device=self.device))
         elif average in {"macro", "none"}:
             self._add_state(
-                "num_tp", torch.zeros((self.num_labels,), device=self.device)
+                "num_tp",
+                torch.zeros((self.num_labels,), device=self.device),
             )
             self._add_state(
-                "num_fp", torch.zeros((self.num_labels,), device=self.device)
+                "num_fp",
+                torch.zeros((self.num_labels,), device=self.device),
             )
             self._add_state(
-                "num_fn", torch.zeros((self.num_labels,), device=self.device)
+                "num_fn",
+                torch.zeros((self.num_labels,), device=self.device),
             )
         else:
             raise NotImplementedError(average)
@@ -162,6 +169,16 @@ class _NERScore(Metric[torch.Tensor], Generic[LabelGeneric]):
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         return _f1_score_compute(self.num_tp, self.num_fp, self.num_fn, self.average)
 
+    def compute_all(
+        self,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        """
+        Compute precision, recall, f1 and support
+        """
+        return _f1_score_support_compute(
+            self.num_tp, self.num_fp, self.num_fn, self.average
+        )
+
     def compute_per_label(
         self,
     ) -> Mapping[
@@ -169,21 +186,24 @@ class _NERScore(Metric[torch.Tensor], Generic[LabelGeneric]):
     ]:
         if self.average not in {"none", "macro"}:
             raise ValueError(
-                f"Average must be either 'none' or 'macro', not {self.average}"
+                f"Average must be either 'none' or 'macro', not {self.average}",
             )
         if self.labels is None:
             raise ValueError(
-                f"Average must be either 'none' or 'macro', not {self.average}"
+                f"Average must be either 'none' or 'macro', not {self.average}",
             )
-        precision, recall, f1 = _f1_score_compute(
-            self.num_tp, self.num_fp, self.num_fn, "none"
+        precision, recall, f1, support = _f1_score_support_compute(
+            self.num_tp,
+            self.num_fp,
+            self.num_fn,
+            "none",
         )
         return {
             label: (
                 precision[pos],
                 recall[pos],
                 f1[pos],
-                self.num_fn[pos] + self.num_tp[pos] + self.num_fp[pos],
+                support[pos],
             )
             for pos, label in enumerate(self.labels)
         }
@@ -367,13 +387,16 @@ class _ELScore(Metric[torch.Tensor], Generic[LabelGeneric]):
             self._add_state("num_fn", torch.tensor(0.0, device=self.device))
         elif average in {"macro", "none"}:
             self._add_state(
-                "num_tp", torch.zeros((self.num_labels,), device=self.device)
+                "num_tp",
+                torch.zeros((self.num_labels,), device=self.device),
             )
             self._add_state(
-                "num_fp", torch.zeros((self.num_labels,), device=self.device)
+                "num_fp",
+                torch.zeros((self.num_labels,), device=self.device),
             )
             self._add_state(
-                "num_fn", torch.zeros((self.num_labels,), device=self.device)
+                "num_fn",
+                torch.zeros((self.num_labels,), device=self.device),
             )
         else:
             raise NotImplementedError(average)
@@ -406,14 +429,17 @@ class _ELScore(Metric[torch.Tensor], Generic[LabelGeneric]):
     ]:
         if self.average not in {"none", "macro"}:
             raise ValueError(
-                f"Average must be either 'none' or 'macro', not {self.average}"
+                f"Average must be either 'none' or 'macro', not {self.average}",
             )
         if self.labels is None:
             raise ValueError(
-                f"Average must be either 'none' or 'macro', not {self.average}"
+                f"Average must be either 'none' or 'macro', not {self.average}",
             )
         precision, recall, f1 = _f1_score_compute(
-            self.num_tp, self.num_fp, self.num_fn, "none"
+            self.num_tp,
+            self.num_fp,
+            self.num_fn,
+            "none",
         )
         return {
             label: (
@@ -478,8 +504,12 @@ class NERConfusionMatrix(_MulticlassConfusionMatrix):
     def update(self, output: BatchedOutputs, target: BatchedOutputs):  # type: ignore[override]
         super().update(
             *_ner_confusion_update(
-                output, target, self.position_aware, self.labels, self.device
-            )
+                output,
+                target,
+                self.position_aware,
+                self.labels,
+                self.device,
+            ),
         )
 
 
@@ -507,5 +537,89 @@ class REConfusionMatrix(_MulticlassConfusionMatrix):
                 self.labels,
                 self.strict,
                 self.device,
-            )
+            ),
         )
+
+
+class _NERMetrics(MultiMetric):
+    def __init__(
+        self,
+        labels: Sequence[LabelGeneric],
+        strict: bool,
+        average: Literal["micro", "macro"],
+        position_aware: bool,
+        device: DeviceType = None,
+    ):
+        super().__init__()
+        self.labels = labels
+        self.f1 = NERF1Score(
+            labels,
+            strict=strict,
+            average=average,
+            position_aware=position_aware,
+            device=device,
+        )
+
+    def compute(self) -> Mapping[str, torch.Tensor]:
+        precision, recall, f1, support = self.f1.compute_all()
+        output = {
+            "precision": precision,
+            "recall": recall,
+            "f1": f1,
+            "support": support,
+        }
+
+        if self.f1.average != "micro":
+            label_result = self.f1.compute_per_label()
+            for label, (precision, recall, f1, support) in label_result.items():
+                if isinstance(label, int):
+                    label = str(label)
+                label = label.lower()
+
+                output.update(
+                    {
+                        label + "_precision": precision,
+                        label + "_recall": recall,
+                        label + "_f1": f1,
+                        label + "_support": support,
+                    }
+                )
+
+        return output
+
+
+class NERMetrics:
+    def __init__(
+        self,
+        labels: Sequence[LabelGeneric],
+        device: DeviceType = None,
+    ):
+        self.micro = _NERMetrics(labels, True, "micro", True, device)
+        self.micro_boundaries = _NERMetrics(labels, False, "micro", True, device)
+        self.micro_pos_unaware = _NERMetrics(labels, True, "micro", False, device)
+        self.macro = _NERMetrics(labels, True, "macro", True, device)
+        # self.macro_boundaries = _NERMetrics(labels, False, "macro", True, device)
+        self.macro_pos_unaware = _NERMetrics(labels, True, "macro", False, device)
+
+    def update(self, outputs, targets):
+        for metrics in self.__dict__.values():
+            if isinstance(metrics, _NERMetrics):
+                metrics.update(outputs, targets)
+
+    def compute(self) -> Mapping[str, torch.Tensor]:
+        prefixes = ["", "boundary", "pos_unaware", "macro", "macro_pos_unaware"]
+        metrics = [
+            self.micro,
+            self.micro_boundaries,
+            self.micro_pos_unaware,
+            self.macro,
+            self.macro_pos_unaware,
+        ]
+
+        output = {}
+        for prefix, metric in zip(prefixes, metrics):
+            prefix = prefix if prefix == "" else prefix + "_"
+            metric_output = metric.compute()
+            for key, value in metric_output.items():
+                output[prefix + key] = value
+        return output
