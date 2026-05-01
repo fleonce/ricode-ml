@@ -109,7 +109,9 @@ def pretty_print_dict(
 
 
 def to_builtin_type(value: Any) -> Any:
-    if isinstance(value, Mapping):
+    if isinstance(value, (str, int, float, bool)):
+        return value
+    elif isinstance(value, Mapping):
         return {
             to_builtin_type(key): to_builtin_type(value) for key, value in value.items()
         }
@@ -117,8 +119,6 @@ def to_builtin_type(value: Any) -> Any:
         return [to_builtin_type(inner) for inner in value]
     elif isinstance(value, set):
         return {to_builtin_type(inner) for inner in value}
-    elif isinstance(value, (str, int, float, bool)):
-        return value
     elif hasattr(value, "__array__"):
         try:
             return value.item()
