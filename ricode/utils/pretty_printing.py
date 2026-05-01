@@ -60,7 +60,7 @@ def pretty_print_iterable(it: Iterable[Any], inline: bool = False) -> str:
     """
     out = "["
     for i, value in enumerate(it):
-        if isinstance(value, Sequence):
+        if isinstance(value, (Sequence, set)):
             value = pretty_print_sequence(value)
         elif isinstance(value, Mapping):
             value = pretty_print_dict(value)
@@ -95,7 +95,7 @@ def pretty_print_dict(
 
         if isinstance(value, Mapping):
             value = pretty_print_dict(value)
-        elif isinstance(value, Sequence):
+        elif isinstance(value, (Sequence, set)):
             value = pretty_print_sequence(value)
         else:
             value = pretty_print_primitive(value)
@@ -106,3 +106,23 @@ def pretty_print_dict(
         out = out[: -len(",")]
     out = out + "\n}"
     return out
+
+
+def to_builtin_type(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return {
+            to_builtin_type(key): to_builtin_type(value) for key, value in value.items()
+        }
+    elif isinstance(value, Sequence):
+        return [to_builtin_type(inner) for inner in value]
+    elif isinstance(value, set):
+        return {to_builtin_type(inner) for inner in value}
+    elif isinstance(value, (str, int, float, bool)):
+        return value
+    elif hasattr(value, "__array__"):
+        try:
+            return value.item()
+        except (RuntimeError, ValueError):
+            return value.tolist()
+    else:
+        raise TypeError(value)
