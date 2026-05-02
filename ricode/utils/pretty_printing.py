@@ -1,7 +1,8 @@
+from types import NoneType
 from typing import Any, Iterable, Mapping, Sequence
 
 
-_PRIMITIVE_TYPES = (int, float, bool, str)
+_PRIMITIVE_TYPES = (int, float, bool, str, NoneType)
 
 
 def _line_spacing(line: str, tabsize: int = 2, first_line: bool = True):
@@ -46,6 +47,8 @@ def pretty_print_primitive(value: Any) -> str:
         return str(value)
     elif isinstance(value, str):
         return value
+    elif value is None:
+        return "None"
     else:
         return f"{value:g}"
 
@@ -111,6 +114,8 @@ def pretty_print_dict(
 def to_builtin_type(value: Any) -> Any:
     if isinstance(value, (str, int, float, bool)):
         return value
+    elif value is None:
+        return None
     elif isinstance(value, Mapping):
         return {
             to_builtin_type(key): to_builtin_type(value) for key, value in value.items()
