@@ -417,7 +417,7 @@ class FlattenedDataset:
             if tensor.shape[1:] != self.shape_of_key(key):
                 raise ValueError(
                     f"Expected newly appended tensor to match the shape of the existing tensors in key {key!r} (instead "
-                    f"of the sequence dimension). Got {tensor.shape!r} vs {self.shape_of_key(key)!r}."
+                    f"of the sequence dimension). Got {tensor.shape[1:]!r} vs {self.shape_of_key(key)!r}."
                 )
             if tensor.dtype != self.dtype_of_key(key):
                 raise ValueError(
