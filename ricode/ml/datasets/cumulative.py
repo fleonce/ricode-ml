@@ -282,9 +282,6 @@ class FlattenedDataset:
         if binsize is None:
             binsize = self.binsizes[key]
 
-        remainder = math.prod(shape, start=1)
-        if remainder > 1:
-            binsize = binsize // remainder
         new_bin = torch.zeros((binsize, *shape), device=device, dtype=dtype)
         index = len(self.bins[key])
         self.bins[key][index] = new_bin
