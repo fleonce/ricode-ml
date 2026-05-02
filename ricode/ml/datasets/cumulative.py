@@ -415,11 +415,20 @@ class FlattenedDataset:
             self._new_bin(key, tensor.device, tensor.dtype, tensor.shape[1:], binsize)
         else:
             if tensor.shape[1:] != self.shape_of_key(key):
-                raise ValueError(tensor.shape[1:], self.shape_of_key(key))
+                raise ValueError(
+                    f"Expected newly appended tensor to match the shape of the existing tensors in key {key!r} (instead "
+                    f"of the sequence dimension). Got {tensor.shape!r} vs {self.shape_of_key(key)!r}."
+                )
             if tensor.dtype != self.dtype_of_key(key):
-                raise ValueError(tensor.dtype, self.dtype_of_key(key))
+                raise ValueError(
+                    f"Expected newly appended tensor to match the dtype of the existing tensors in key {key!r}. "
+                    f"Got {tensor.dtype} (new) vs {self.dtype_of_key(key)} (existing)."
+                )
             if tensor.device != self.device:
-                raise ValueError(tensor.device, self.device)
+                raise ValueError(
+                    f"Expected newly appended tensor to be on the same device as the device of this dataset. "
+                    f"Got {tensor.device} vs {self.device}"
+                )
 
         binsize = self.binsizes[key]
         if this_sequence_length >= binsize:
