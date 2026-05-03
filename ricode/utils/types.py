@@ -1,6 +1,6 @@
 from typing import Generator, NoReturn, Protocol, runtime_checkable, TypeVar
 
-_T = TypeVar("_T", bound=None)
+_T = TypeVar("_T")
 
 
 def raise_if_none(t: _T | None) -> _T | NoReturn:
