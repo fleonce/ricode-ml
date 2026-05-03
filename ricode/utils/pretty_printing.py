@@ -112,18 +112,23 @@ def pretty_print_dict(
 
 
 def to_builtin_type(value: Any) -> Any:
+    return ensure_only_builtin_types(value)
+
+
+def ensure_only_builtin_types(value: Any) -> Any:
     if isinstance(value, (str, int, float, bool)):
         return value
     elif value is None:
         return None
     elif isinstance(value, Mapping):
         return {
-            to_builtin_type(key): to_builtin_type(value) for key, value in value.items()
+            ensure_only_builtin_types(key): ensure_only_builtin_types(value)
+            for key, value in value.items()
         }
     elif isinstance(value, Sequence):
-        return [to_builtin_type(inner) for inner in value]
+        return [ensure_only_builtin_types(inner) for inner in value]
     elif isinstance(value, set):
-        return {to_builtin_type(inner) for inner in value}
+        return {ensure_only_builtin_types(inner) for inner in value}
     elif hasattr(value, "__array__"):
         try:
             return value.item()

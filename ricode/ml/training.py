@@ -105,6 +105,7 @@ from ricode.ml.training_utils import (
     is_clean_working_tree,
 )
 from ricode.nvidia.nvml import _nvml_available, setup_nvml
+from ricode.utils.pretty_printing import ensure_only_builtin_types
 
 try:
     import matplotlib.pyplot as plt
@@ -1955,15 +1956,4 @@ def save_metrics_to_file(
 
 
 def ensure_no_tensors_in_value(v) -> Any:
-    if isinstance(v, list) or isinstance(v, tuple):
-        return type(v)(ensure_no_tensors_in_value(e) for e in v)
-    elif isinstance(v, dict):
-        return {k: ensure_no_tensors_in_value(e) for k, e in v.items()}
-    elif isinstance(v, torch.Tensor):
-        if v.numel() == 1:
-            return v.item()
-        return v.tolist()
-    elif type(v) not in {str, int, float}:
-        raise ValueError(v)
-    else:
-        return v
+    return ensure_only_builtin_types(v)
