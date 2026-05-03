@@ -1454,9 +1454,7 @@ def do_train(
             **plot_kwargs,
         )
         if return_validation_metrics:
-            return MetricDict.from_kwargs(
-                validation=best_validation_metrics, test=test_metrics
-            )
+            return TrainingResult(test_metrics, best_validation_metrics)
         return test_metrics
 
     else:
@@ -1936,24 +1934,20 @@ def _save_loss_plot(
 
 
 def save_metrics_to_file(
-    metrics: (
-        TMetrics
-        | tuple[TMetrics, ...]
-        | MetricDict[TMetrics]
-        | tuple[MetricDict[TMetrics], ...]
-    ),
+    metrics: TMetrics | TrainingResult[TMetrics],
     score_history: Mapping[str, list[int | float | tuple[int | float, ...]]],
     file: Path,
 ):
     save: dict[str, Any] = dict()
     save["outcomes"] = ensure_no_tensors_in_value(score_history)
+    if isinstance(metrics, TrainingResult):
+        metrics, validation_metrics = metrics.test, metrics.validation
+        if validation_metrics is not None:
+            save["validation_metrics"] = ensure_no_tensors_in_value(
+                validation_metrics.to_dict()
+            )
 
-    if isinstance(metrics, tuple):
-        save["test_metrics"] = ensure_no_tensors_in_value(
-            [elem.to_dict() for elem in metrics]
-        )
-    else:
-        save["test_metrics"] = ensure_no_tensors_in_value(metrics.to_dict())
+    save["test_metrics"] = ensure_no_tensors_in_value(metrics.to_dict())
 
     file.parent.mkdir(parents=True, exist_ok=True)
     with file.open("w") as f:
