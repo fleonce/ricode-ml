@@ -28,9 +28,12 @@ from torch.utils.data.sampler import (
 from ricode.ml.datasets.concatenated import ConcatenatedDataset
 from ricode.ml.training_basics import BasicHparams, Batch
 from ricode.ml.training_types import (
+    DataLoaderProtocol,
     HasDatasetProperties,
     SupportsGetItemAndLength,
     SupportsNext,
+    TDataset,
+    THparams,
     TrainingArgs,
 )
 
@@ -80,6 +83,39 @@ def create_primary_dataloader(
         train,
         None,
     )
+
+
+def dataloader_setup(
+    collate_fn: Optional[CollateFunction],
+    # enable memory pinning?
+    # when we have lots of data, moving from pinned memory->gpu can speed up the transfer to the gpu
+    pin_memory: bool = False,
+    batch_size: Optional[int | Callable[[str], int]] = None,
+    num_workers: int = 0,
+    dataset: Optional[torch.utils.data.Dataset[Any]] = None,
+    batch_sampler: Optional[Sampler[list[int]]] = None,
+) -> DataLoaderProtocol[TDataset, THparams]:
+    def func(
+        args: TrainingArgs[THparams, THparams],
+        # the split we are creating the dataloader for
+        split: str,
+        # do we want to use the dataloader for training?
+        #   this should enable shuffling and stuff like that
+        train: bool,
+    ):
+        return setup_dataloader(
+            args,
+            split,
+            train,
+            collate_fn=collate_fn,
+            pin_memory=pin_memory,
+            batch_size=batch_size,
+            num_workers=num_workers,
+            dataset=dataset,
+            batch_sampler=batch_sampler,
+        )
+
+    return func
 
 
 def setup_dataloader(
