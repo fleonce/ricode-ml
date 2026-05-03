@@ -78,7 +78,7 @@ from ricode.ml.training_basics import (
     BasicHparams,
     BasicMetrics,
     conf_to_mapping,
-    MetricsDict,
+    MetricDict,
     TensorboardLogger,
 )
 from ricode.ml.training_operators import safe_score_comparison
@@ -705,7 +705,7 @@ def do_evaluate(
     evaluate_fn: EvaluateProtocol[TModel, TDataset, THparams, TMetrics],
     dataloader_fn: DataLoaderProtocol[TDataset, THparams],
     score_comparison: Callable[[float, float], bool] = operator.gt,
-):
+) -> tuple[TMetrics, bool, bool, float, bool]:
     args.inside_eval = True
     logger = logging.getLogger("do_evaluate")
 
@@ -787,8 +787,8 @@ def do_evaluate(
         logger.info(
             f"No improvement for {args.hparams.patience} steps, aborting training after step {args.train_steps}"
         )
-        return False, True, outcome_score, True
-    return new_best_score, stop_after_epoch, outcome_score, False
+        return metrics, False, True, outcome_score, True
+    return metrics, new_best_score, stop_after_epoch, outcome_score, False
 
 
 @finalise_distributed_environment_after_exit
@@ -833,12 +833,8 @@ def do_train(
     check_nan_grad_norm: bool = False,
     reproducibility_variables: Optional[Mapping[str, Any]] = None,
     hooks: Optional[Hooks] = None,
-) -> Optional[
-    TMetrics
-    | tuple[TMetrics, ...]
-    | MetricsDict[TMetrics]
-    | tuple[MetricsDict[TMetrics], ...]
-]:
+    return_validation_metrics: bool = False,
+) -> TMetrics | MetricDict[TMetrics]:
     """
     Training implementation
 
@@ -1037,6 +1033,7 @@ def do_train(
         postfix["score"] = float(args.best_score[1])
 
     args.start_step = args.train_steps
+    best_validation_metrics: TMetrics | None = None
     with (
         logging_redirect_tqdm(),
         tqdm(
@@ -1216,15 +1213,21 @@ def do_train(
                 if (
                     args.train_steps % interval_to_eval_at
                 ) == 0 and args.grad_steps == 0:
-                    new_best_score, stop_after_epoch, new_score, patience_exceeded = (
-                        do_evaluate(
-                            model,
-                            args,
-                            evaluate_fn,
-                            dataloader_fn,
-                            score_comparison,
-                        )
+                    (
+                        new_validation_metrics,
+                        new_best_score,
+                        stop_after_epoch,
+                        new_score,
+                        patience_exceeded,
+                    ) = do_evaluate(
+                        model,
+                        args,
+                        evaluate_fn,
+                        dataloader_fn,
+                        score_comparison,
                     )
+                    if new_best_score:
+                        best_validation_metrics = new_validation_metrics
 
                     if new_best_score or new_checkpoint_logic:
                         checkpoint_path = Path(model_path)
@@ -1358,11 +1361,17 @@ def do_train(
             model_dir / "loss.pdf",
             **plot_kwargs,
         )
+        if return_validation_metrics:
+            return MetricDict.from_kwargs(
+                validation=best_validation_metrics, test=test_metrics
+            )
         return test_metrics
 
     else:
-        save_profiler(do_profile, rank, prof, model_dir / "profiler.json")
-        return None
+        prof_path = model_dir / "profiler.json"
+        save_profiler(do_profile, rank, prof, prof_path)
+        logger.info(f"Saved profiler to {prof_path}")
+        sys.exit(42)
 
 
 def do_test(
@@ -1371,7 +1380,7 @@ def do_test(
     evaluate_fn: EvaluateProtocol[TModel, TDataset, THparams, TMetrics],
     dataloader_fn: DataLoaderProtocol[TDataset, THparams],
     device: Optional[str] = None,
-) -> TMetrics | MetricsDict[TMetrics]:
+) -> TMetrics:
     if device is None:
         device = "cpu" if not torch.cuda.is_available() else "cuda:0"
 
@@ -1838,8 +1847,8 @@ def save_metrics_to_file(
     metrics: (
         TMetrics
         | tuple[TMetrics, ...]
-        | MetricsDict[TMetrics]
-        | tuple[MetricsDict[TMetrics], ...]
+        | MetricDict[TMetrics]
+        | tuple[MetricDict[TMetrics], ...]
     ),
     score_history: Mapping[str, list[int | float | tuple[int | float, ...]]],
     file: Path,

@@ -1,4 +1,3 @@
-import collections
 import dataclasses
 import fnmatch
 import itertools
@@ -512,6 +511,10 @@ class BasicMetrics:
             for key, value in kwargs.items():
                 setattr(self, key, value)
 
+    def update(self, mapping: Mapping[str, Any]) -> None:
+        for key, value in mapping.items():
+            setattr(self, key, value)
+
     @classmethod
     def from_dict(cls, inp: Mapping[str, Any]) -> typing_extensions.Self:
         return cls(**inp)
@@ -584,49 +587,10 @@ class BasicMetrics:
 M = TypeVar("M", bound=BasicMetrics)
 
 
-class MetricsDict(Generic[M], BasicMetrics):
-    metrics: "OrderedDict[str, M | MetricsDict[M]]"
-
-    def __init__(self, primary: Optional[str] = None, **kwargs: "M | MetricsDict[M]"):
-        super().__init__()
-        self.primary_metrics = primary
-        self.metrics = collections.OrderedDict(kwargs)
-
-    def __getitem__(self, item) -> "M | MetricsDict[M]":
-        return self.metrics[item]
-
-    def __contains__(self, item: str):
-        return item in self.metrics
-
-    def first(self):
-        for _, value in self.metrics.items():
-            return value
-        raise ValueError(f"Empty {self}")
-
-    def __getattr__(self, item):
-        if hasattr(self.first(), item):
-            return {key: getattr(value, item) for key, value in self.metrics.items()}
-        return super().__getattribute__(item)
-
-    def to_dict(self):
-        dicts = {k: metric.to_dict() for k, metric in self.metrics.items()}
-        target = dict()
-        for elem_key, elem in dicts.items():
-            for k, v in elem.items():
-                target[elem_key + "__" + k] = v
-        return target
-
-    def __repr__(self):
-        inner = list()
-        for key, value in self.metrics.items():
-            if key in (self.__class__.ignore_in_repr or set()):
-                continue
-
-            value_repr = repr(value)
-            value_repr = prepend_newlines_with_spacing(value_repr, "  ")
-            inner.append(f"  {key}={value_repr}")
-        breaker = ",\n"
-        return f"{{\n{breaker.join(inner)}\n}}"
+class MetricDict(Generic[M], OrderedDict[str, Optional[M]]):
+    @classmethod
+    def from_kwargs(cls, **kwargs: Optional[M]):
+        return MetricDict(**kwargs)
 
 
 def prepend_newlines_with_spacing(s: str, spacing: str) -> str:

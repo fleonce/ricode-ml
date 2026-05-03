@@ -1,3 +1,4 @@
+import functools
 import math
 import warnings
 from typing import Any, Callable, Mapping, Optional, TYPE_CHECKING, TypeVar
@@ -11,7 +12,7 @@ from torcheval.metrics.toolkit import sync_and_compute
 from ricode.ml._training.watcher import watcher_tqdm
 from ricode.ml.datasets.proxy import ProxyTrainingArgs
 from ricode.ml.distributed import distributed_world_size
-from ricode.ml.training_basics import BasicMetrics, MetricsDict
+from ricode.ml.training_basics import BasicMetrics
 from ricode.ml.training_datasets import BasicDataset
 from ricode.ml.training_types import (
     DataLoaderProtocol,
@@ -21,6 +22,7 @@ from ricode.ml.training_types import (
     TConfig,
     TDataset,
     THparams,
+    TMetrics,
     TModel,
     TrainingArgs,
 )
@@ -231,43 +233,60 @@ _T_cov_metrics = TypeVar("_T_cov_metrics", bound=BasicMetrics, covariant=True)
 def evaluate_multikey_split_datasets(
     func: EvaluateProtocol[_T_cont, TDataset, THparams, _T_cov_metrics]
 ) -> EvaluateProtocol[_T_cont, TDataset, THparams, _T_cov_metrics]:
-    def inner(
-        model: _T_cont,
-        args: TrainingArgs[THparams, TDataset],
-        split: str,
-        dataloader_fn: DataLoaderProtocol[TDataset, THparams],
-    ) -> _T_cov_metrics | MetricsDict[_T_cov_metrics]:
-        if isinstance(args.dataset[split], dict):
-            if len(args.dataset[split]) == 0:
-                raise ValueError("Cannot evaluate zero datasets")
+    return evaluate_multiple_sub_splits(BasicMetrics)(func)
 
-            metrics_per_key = dict()
-            metrics_class = None
-            for key in args.dataset[split].keys():
-                result = func(model, ProxyTrainingArgs(args, key), split, dataloader_fn)  # type: ignore
-                metrics_per_key[key] = result
-                metrics_class = metrics_class or result.__class__
 
-            metrics = MetricsDict(None, **metrics_per_key)
-            return metrics_class.from_dict(metrics.to_dict())
-        return func(model, args, split, dataloader_fn)
+def evaluate_multiple_sub_splits(
+    metrics_class: type[TMetrics],
+) -> Callable[
+    [EvaluateProtocol[TModel, TDataset, THparams, TMetrics]],
+    EvaluateProtocol[TModel, TDataset, THparams, TMetrics],
+]:
+    def decorator(
+        func: EvaluateProtocol[TModel, TDataset, THparams, TMetrics]
+    ) -> EvaluateProtocol[TModel, TDataset, THparams, TMetrics]:
+        @functools.wraps(func)
+        def wrapper(
+            model: TModel,
+            args: TrainingArgs[THparams, TDataset],
+            split: str,
+            dataloader_fn: DataLoaderProtocol[TDataset, THparams],
+        ) -> TMetrics:
+            if not isinstance(args.dataset[split], Mapping):
+                return func(model, args, split, dataloader_fn)
 
-    return inner
+            mapping = args.dataset[split]
+            total_result = metrics_class.from_dict({})
+            for key in mapping.keys():
+                result = func(
+                    model,
+                    ProxyTrainingArgs(args, key),  # pyrefly: ignore[bad-argument-type]
+                    split,
+                    dataloader_fn,
+                ).to_dict()
+
+                result = {key + "__" + k: v for k, v in result.items()}
+                total_result.update(result)
+            return total_result
+
+        return wrapper
+
+    return decorator
 
 
 def multistage_evaluate_function(
-    metrics_class: type[_T_cov_metrics],
-    *funcs: EvaluateProtocol[_T_cont, TDataset, THparams, _T_cov_metrics],
+    metrics_class: type[TMetrics],
+    *funcs: EvaluateProtocol[TModel, TDataset, THparams, TMetrics],
 ):
     if len(funcs) == 0:
         return False
 
     def inner(
-        model: _T_cont,
+        model: TModel,
         args: TrainingArgs[THparams, TDataset],
         split: str,
         dataloader_fn: DataLoaderProtocol[TDataset, THparams],
-    ) -> _T_cov_metrics | MetricsDict[_T_cov_metrics]:
+    ) -> TMetrics:
         metrics = metrics_class()
         for func in funcs:
             func_metrics = func(

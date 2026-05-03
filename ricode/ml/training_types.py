@@ -33,7 +33,6 @@ from ricode.ml.training_basics import (
     BasicHparams,
     BasicMetrics,
     Batch,
-    MetricsDict,
     TensorboardLogger,
 )
 from ricode.ml.training_utils import cached_property
@@ -355,7 +354,7 @@ class EvaluateProtocol(Protocol[_T_cont, TDataset, THparams, _T_CovMetrics]):
         args: TrainingArgs[THparams, TDataset],
         split: str,
         dataloader_fn: DataLoaderProtocol[TDataset, THparams],
-    ) -> _T_CovMetrics | MetricsDict[_T_CovMetrics]: ...
+    ) -> _T_CovMetrics: ...
 
 
 def _identity_hook(model: TModel, args: TrainingArgs[THparams, TDataset]):
