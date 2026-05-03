@@ -1,7 +1,8 @@
+import dataclasses
 import functools
 import math
 import warnings
-from typing import Any, Callable, Mapping, Optional, TYPE_CHECKING, TypeVar
+from typing import Any, Callable, Generic, Mapping, Optional, TYPE_CHECKING, TypeVar
 
 from torch.nn import Module
 from torch.optim import AdamW
@@ -19,6 +20,7 @@ from ricode.ml.training_types import (
     EvaluateProtocol,
     HasOptimizerArgs,
     ModelInitProtocol,
+    SupportsGetItemDataclass,
     TConfig,
     TDataset,
     THparams,
@@ -300,6 +302,12 @@ def multistage_evaluate_function(
         return metrics
 
     return inner
+
+
+@dataclasses.dataclass
+class TrainingResult(Generic[TMetrics], SupportsGetItemDataclass):
+    test: TMetrics
+    validation: Optional[TMetrics]
 
 
 @evaluate_multikey_split_datasets

@@ -12,12 +12,10 @@ from types import NoneType
 from typing import (
     Any,
     ClassVar,
-    Generic,
     Mapping,
     MutableMapping,
     MutableSequence,
     Optional,
-    OrderedDict,
     Protocol,
     runtime_checkable,
     Sequence,
@@ -585,12 +583,6 @@ class BasicMetrics:
 
 
 M = TypeVar("M", bound=BasicMetrics)
-
-
-class MetricDict(Generic[M], OrderedDict[str, Optional[M]]):
-    @classmethod
-    def from_kwargs(cls, **kwargs: Optional[M]):
-        return MetricDict(**kwargs)
 
 
 def prepend_newlines_with_spacing(s: str, spacing: str) -> str:

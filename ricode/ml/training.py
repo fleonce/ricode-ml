@@ -26,9 +26,11 @@ from typing import (
     Any,
     Callable,
     ContextManager,
+    Literal,
     Mapping,
     MutableMapping,
     Optional,
+    overload,
     TypeVar,
 )
 
@@ -81,6 +83,7 @@ from ricode.ml.training_basics import (
     MetricDict,
     TensorboardLogger,
 )
+from ricode.ml.training_defaults import TrainingResult
 from ricode.ml.training_operators import safe_score_comparison
 from ricode.ml.training_types import (
     ConfigInitProtocol,
@@ -791,6 +794,96 @@ def do_evaluate(
     return metrics, new_best_score, stop_after_epoch, outcome_score, False
 
 
+@overload
+def do_train(
+    dataset: TDataset,
+    hparams: THparams,
+    model_class: type[TModel],
+    config_class: type[TConfig],
+    evaluate_fn: EvaluateProtocol[TModel, TDataset, THparams, TMetrics],
+    optimizer_fn: OptimizerInitProtocol[TModel, TDataset, THparams],
+    dataloader_fn: DataLoaderProtocol[TDataset, THparams],
+    config_init_fn: ConfigInitProtocol[TDataset, THparams, TConfig] | None = None,
+    step_fn: ForwardBackwardProtocol[TModel, THparams, TDataset] = forward_backward,
+    optimizer_step_fn: OptimizerStepProtocol[TModel] = train_step,
+    transformer: Optional[str] = None,
+    model_path: Optional[str] = None,
+    log_file: Optional[Path] = None,
+    log_append: bool = False,
+    logger: Optional[logging.Logger] = None,
+    seed: int = 42,
+    use_tqdm: bool = True,
+    use_bfloat16: Optional[bool] = None,
+    use_fsdp: NoneType = None,
+    job_config: Optional[JobConfig] = None,
+    use_tensorboard: bool = True,
+    num_epochs: int = 0,
+    dont_ckpt: bool = False,
+    do_profile: bool = False,
+    load_ckpt: Optional[Path | str] = None,
+    load_optimizer_ckpt: Optional[bool] = True,
+    track_metrics: Optional[set[str]] = None,
+    track_title: Optional[str] = None,
+    model_init: Optional[ModelInitProtocol[TConfig, TModel]] = None,
+    plot_kwargs: Optional[Mapping[str, Any]] = None,
+    score_comparison: Optional[Callable[[float, float], bool]] = None,
+    loss_is_batch_accumulated: bool = False,
+    allow_nan_parameters: bool = False,
+    memory_checkpoints: bool = False,
+    device: Optional[str] = None,
+    new_checkpoint_logic: Optional[bool] = True,
+    check_nan_grad_norm: bool = False,
+    reproducibility_variables: Optional[Mapping[str, Any]] = None,
+    hooks: Optional[Hooks] = None,
+    return_validation_metrics: bool = False,
+) -> TMetrics: ...
+
+
+@overload
+def do_train(
+    dataset: TDataset,
+    hparams: THparams,
+    model_class: type[TModel],
+    config_class: type[TConfig],
+    evaluate_fn: EvaluateProtocol[TModel, TDataset, THparams, TMetrics],
+    optimizer_fn: OptimizerInitProtocol[TModel, TDataset, THparams],
+    dataloader_fn: DataLoaderProtocol[TDataset, THparams],
+    config_init_fn: ConfigInitProtocol[TDataset, THparams, TConfig] | None = None,
+    step_fn: ForwardBackwardProtocol[TModel, THparams, TDataset] = forward_backward,
+    optimizer_step_fn: OptimizerStepProtocol[TModel] = train_step,
+    transformer: Optional[str] = None,
+    model_path: Optional[str] = None,
+    log_file: Optional[Path] = None,
+    log_append: bool = False,
+    logger: Optional[logging.Logger] = None,
+    seed: int = 42,
+    use_tqdm: bool = True,
+    use_bfloat16: Optional[bool] = None,
+    use_fsdp: NoneType = None,
+    job_config: Optional[JobConfig] = None,
+    use_tensorboard: bool = True,
+    num_epochs: int = 0,
+    dont_ckpt: bool = False,
+    do_profile: bool = False,
+    load_ckpt: Optional[Path | str] = None,
+    load_optimizer_ckpt: Optional[bool] = True,
+    track_metrics: Optional[set[str]] = None,
+    track_title: Optional[str] = None,
+    model_init: Optional[ModelInitProtocol[TConfig, TModel]] = None,
+    plot_kwargs: Optional[Mapping[str, Any]] = None,
+    score_comparison: Optional[Callable[[float, float], bool]] = None,
+    loss_is_batch_accumulated: bool = False,
+    allow_nan_parameters: bool = False,
+    memory_checkpoints: bool = False,
+    device: Optional[str] = None,
+    new_checkpoint_logic: Optional[bool] = True,
+    check_nan_grad_norm: bool = False,
+    reproducibility_variables: Optional[Mapping[str, Any]] = None,
+    hooks: Optional[Hooks] = None,
+    return_validation_metrics: Literal[True] = True,
+) -> TrainingResult: ...
+
+
 @finalise_distributed_environment_after_exit
 @setup_nvml
 def do_train(
@@ -834,7 +927,7 @@ def do_train(
     reproducibility_variables: Optional[Mapping[str, Any]] = None,
     hooks: Optional[Hooks] = None,
     return_validation_metrics: bool = False,
-) -> TMetrics | MetricDict[TMetrics]:
+) -> TMetrics | TrainingResult[TMetrics]:
     """
     Training implementation
 
