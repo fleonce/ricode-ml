@@ -80,7 +80,6 @@ from ricode.ml.training_basics import (
     BasicHparams,
     BasicMetrics,
     conf_to_mapping,
-    MetricDict,
     TensorboardLogger,
 )
 from ricode.ml.training_defaults import TrainingResult
