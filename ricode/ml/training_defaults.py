@@ -305,7 +305,7 @@ def multistage_evaluate_function(
 
 
 @dataclasses.dataclass
-class TrainingResult(Generic[TMetrics], SupportsGetItemDataclass):
+class TrainingResult(SupportsGetItemDataclass, Generic[TMetrics]):
     test: TMetrics
     validation: Optional[TMetrics]
 
