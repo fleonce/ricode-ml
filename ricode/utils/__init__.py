@@ -1,5 +1,3 @@
-from _times import format_datetime, parse_datetime
-
 from . import (
     decorators,
     func_cache,
@@ -12,6 +10,7 @@ from . import (
     tempfiles,
     types,
 )
+from ._times import format_datetime, parse_datetime
 
 __all__ = [
     "decorators",
