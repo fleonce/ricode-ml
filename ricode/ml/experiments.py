@@ -13,6 +13,7 @@ import typing
 import warnings
 from collections import defaultdict, OrderedDict
 from dataclasses import dataclass
+from datetime import datetime
 from functools import total_ordering
 from json import load
 from logging import StreamHandler
@@ -20,6 +21,7 @@ from pathlib import Path
 from time import sleep
 from typing import (
     Any,
+    Callable,
     Generator,
     Generic,
     Literal,
@@ -38,7 +40,10 @@ import attrs
 import typing_extensions
 from with_argparse import with_dataclass
 
+from ricode.ml.distributed import distributed_rank
 from ricode.ml.training_types import AttrsClass
+from ricode.utils import format_datetime
+from ricode.utils.hashing import mapping_to_hash
 from ricode.utils.imports import is_pandas_available
 
 
@@ -187,6 +192,7 @@ TExperiment = TypeVar("TExperiment", bound=AttrsClass)
 class ExperimentWatcher(Generic[TExperimentConfig]):
     experiment_dir: Path
     experiment: TExperiment = attrs.field()
+    args_fn: Callable[[OrderedDict[str, Any]], Sequence[str]]
 
     @experiment.validator
     def _experiment_validator(self, attrib, value):
@@ -528,7 +534,7 @@ class ExperimentWatcher(Generic[TExperimentConfig]):
         return "running"
 
     def get_run_args(self, info: TExperimentConfig):
-        raise NotImplementedError(info)
+        return self.args_fn(info)
 
 
 def run_subprocess_into_file(
@@ -595,3 +601,63 @@ def run_subprocess_into_file(
         elif retcode is None:
             retcode = 0
     return subprocess.CompletedProcess(process.args, retcode, None, None)
+
+
+@attrs.define
+class HashingExperimentWatcher(ExperimentWatcher[OrderedDict[str, Any]]):
+    train_script: str = "train.py"
+    preprocessing_path: str = "preprocessing"
+    cli_args: list[str] = attrs.field(factory=list)
+
+    def get_experiment_dir(self, info: OrderedDict[str, Any], base_dir: Path) -> Path:
+        def cleanup_value(inp: Any) -> str:
+            if not isinstance(inp, str):
+                return str(inp)
+            return inp
+
+        cleanup_info = {key: cleanup_value(value) for key, value in info.items()}
+        experiment_hash = mapping_to_hash(cleanup_info)
+        return base_dir / ("ex_" + experiment_hash)
+
+
+def do_experiments(
+    experiment: TExperiment,
+    args_fn: Callable[[TExperimentConfig], Sequence[str]],
+    config_type: type[TExperimentConfig] = OrderedDict,
+    date: datetime | None = None,
+    gpus_per_job: int = 1,
+):
+    os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
+
+    if date is None:
+        date = datetime.now()
+
+    experiment_dir = Path("experiments") / format_datetime(date)
+    experiment_dir.mkdir(parents=True, exist_ok=True)
+
+    log_handlers = [
+        logging.StreamHandler(sys.stdout),
+        logging.FileHandler(
+            experiment_dir / f"run_experiment_rank{distributed_rank()}.log", "a"
+        ),
+    ]
+
+    logging.basicConfig(
+        format="%(asctime)s - %(levelname)s - %(message)s",
+        datefmt="%m/%d/%Y %H:%M:%S",
+        level=logging.INFO,
+        handlers=log_handlers,
+    )
+    logger = logging.getLogger("run_experiment")
+
+    with HashingExperimentWatcher(
+        experiment_dir,
+        experiment,
+        args_fn,
+        logger,
+        config_type,
+        gpus_per_job=gpus_per_job,
+    ) as watcher:
+        logger.info(f"Starting experiment cycle in {experiment_dir}")
+        watcher.run()
+        watcher.summary()
