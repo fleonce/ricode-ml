@@ -192,7 +192,7 @@ TExperiment = TypeVar("TExperiment", bound=AttrsClass)
 class ExperimentWatcher(Generic[TExperimentConfig]):
     experiment_dir: Path
     experiment: TExperiment = attrs.field()
-    args_fn: Callable[[OrderedDict[str, Any]], Sequence[str]]
+    args_fn: Callable[[OrderedDict[str, Any]], list[str]]
 
     @experiment.validator
     def _experiment_validator(self, attrib, value):
@@ -534,7 +534,7 @@ class ExperimentWatcher(Generic[TExperimentConfig]):
         return "running"
 
     def get_run_args(self, info: TExperimentConfig):
-        return self.args_fn(info)
+        return [sys.executable] + self.args_fn(info)
 
 
 def run_subprocess_into_file(
