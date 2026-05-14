@@ -189,10 +189,10 @@ TExperiment = TypeVar("TExperiment", bound=AttrsClass)
 
 
 @attrs.define
-class ExperimentWatcher(Generic[TExperimentConfig]):
+class ExperimentWatcher(Generic[TExperimentConfig, TExperiment]):
     experiment_dir: Path
     experiment: TExperiment = attrs.field()
-    args_fn: Callable[[OrderedDict[str, Any]], list[str]]
+    args_fn: Callable[[TExperiment, TExperimentConfig], list[str]]
 
     @experiment.validator
     def _experiment_validator(self, attrib, value):
@@ -604,12 +604,9 @@ def run_subprocess_into_file(
 
 
 @attrs.define
-class HashingExperimentWatcher(ExperimentWatcher[OrderedDict[str, Any]]):
-    train_script: str = "train.py"
-    preprocessing_path: str = "preprocessing"
-    cli_args: list[str] = attrs.field(factory=list)
+class HashingExperimentWatcher(ExperimentWatcher[TExperimentConfig, TExperiment]):
 
-    def get_experiment_dir(self, info: OrderedDict[str, Any], base_dir: Path) -> Path:
+    def get_experiment_dir(self, info: TExperimentConfig, base_dir: Path) -> Path:
         def cleanup_value(inp: Any) -> str:
             if not isinstance(inp, str):
                 return str(inp)
