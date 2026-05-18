@@ -1,7 +1,7 @@
 [project]
 name = "ricode"
 description = "PyTorch based deep learning utilities for dataset handling and model training"
-version = "0.0.1rc1"
+version = "0.0.1rc2"
 dependencies = [
     "torchcheck==1.0.8",
     "tensorboard==2.20.0",
@@ -17,8 +17,9 @@ dependencies = [
     "pyjson5==2.0.0",
     "multiprocess==0.70.17",
     "ijson==3.5.0",
+    "pre-commit>=4.6.0",
 ]
-requires-python = ">= 3.10"
+requires-python = ">= 3.12"
 authors = [
     {name = "Moritz Hennen", email = "mail@fleonce.de"}
 ]
@@ -36,3 +37,6 @@ brrrrrrrr = "ricode:distributed.launch"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["ricode*"]
+
+[tool.uv]
+package = true

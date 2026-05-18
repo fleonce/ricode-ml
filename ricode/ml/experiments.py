@@ -38,9 +38,11 @@ from typing import (
 import attr
 import attrs
 import typing_extensions
+from attr import AttrsInstance
 from with_argparse import with_dataclass
 
 from ricode.ml.distributed import distributed_rank
+from ricode.ml.training_basics import conf_to_mapping, flatten_mapping
 from ricode.ml.training_types import AttrsClass
 from ricode.utils import format_datetime
 from ricode.utils.hashing import mapping_to_hash
@@ -658,3 +660,63 @@ def do_experiments(
         logger.info(f"Starting experiment cycle in {experiment_dir}")
         watcher.run()
         watcher.summary()
+
+
+def do_experiments_for_parameters[A : AttrsInstance](
+    parameter_matrix: A,
+    use_submappings: bool = True,
+    **hyperparameters: A,
+) -> Generator[Mapping[str, A], None, None]:
+    if len(hyperparameters) == 0:
+        raise ValueError("Need at least a single hyperparameter instance to run experiments")
+
+    for name, hyperparameter in hyperparameters.items():
+        if not attr.has(type(hyperparameter)):
+            raise ValueError(f"Keyword parameter {name!r} must be an attrs instance, got {type(hyperparameter)!r}")
+        try:
+            copy.deepcopy(hyperparameter)
+        except:
+            raise ValueError(f"Keyword parameter {name!r} must be a deepcopy-able object, got {type(hyperparameter)!r}")
+
+    parameter_mapping = conf_to_mapping(parameter_matrix)
+    parameters = tuple(parameter_mapping.values())
+    parameter_names = tuple(parameter_mapping.keys())
+    parameter_set = set(parameter_names)
+
+    if use_submappings:
+        flattened_parameter_mapping = flatten_mapping(parameter_mapping)
+        flattened_parameters = tuple(flattened_parameter_mapping.keys())
+
+        for parameter_instances in itertools.product(flattened_parameter_mapping.values()):
+            run_hyperparameters = {key: copy.deepcopy(value) for key, value in hyperparameters.items()}
+
+            for hp_name, hyperparameter in run_hyperparameters.items():
+                if hp_name not in parameter_names:
+                    raise ValueError(f"When {use_submappings=}, the hyperparameter config must contain the following keys: {parameter_names!r}")
+
+                hp_fieldnames = {name for name in attrs.fields(type(hyperparameter))}
+
+                hp_parameter_instances = {
+                    name: parameter_instances[flattened_parameters.index(flattened_name)] for name in hp_fieldnames
+                    if (flattened_name := hp_name + "." + name) in flattened_parameters
+                }
+
+                for key, value in hp_parameter_instances.items():
+                    setattr(run_hyperparameters[hp_name], key, value)
+
+            # when yield is done, experiment will start, so we have to prepare the correct dir, etc ...
+            #  todo: do this in another method and have this function only do this preparation stuff
+            yield run_hyperparameters
+
+    else:
+        for parameter_instances in itertools.product(parameter_mapping.values()):
+            pass
+
+        raise NotImplementedError
+
+        for i, name in enumerate(parameter_names):
+            parameter_value = parameter_instances[i]
+            if use_submappings:
+                for
+
+    for name, field in attrs.fields(type(parameter_matrix)):

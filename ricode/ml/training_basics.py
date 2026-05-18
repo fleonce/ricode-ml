@@ -7,6 +7,7 @@ import pathlib
 import re
 import warnings
 from abc import ABC
+from collections import OrderedDict
 from pathlib import Path
 from types import NoneType
 from typing import (
@@ -460,6 +461,19 @@ def conf_to_mapping(conf: Any):
         return [conf_to_mapping(value) for value in conf]
     else:
         return conf
+
+
+def flatten_mapping(
+    m: Mapping[str, Any], output_type=OrderedDict
+) -> MutableMapping[str, Any]:
+    result = output_type()
+    for key, value in m.items():
+        if not isinstance(value, Mapping):
+            result[key] = value
+        else:
+            for kk, vv in flatten_mapping(value).items():
+                result[key + "." + kk] = vv
+    return result
 
 
 def conf_to_json(conf: Any, indent=2):
