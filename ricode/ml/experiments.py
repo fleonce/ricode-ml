@@ -192,7 +192,7 @@ TExperiment = TypeVar("TExperiment", bound=AttrsClass)
 class ExperimentWatcher(Generic[TExperimentConfig, TExperiment]):
     experiment_dir: Path
     experiment: TExperiment = attrs.field()
-    args_fn: Callable[[TExperiment, TExperimentConfig], Sequence[str]]
+    args_fn: Callable[[TExperiment, TExperimentConfig, Path], Sequence[str]]
 
     @experiment.validator
     def _experiment_validator(self, attrib, value):
@@ -534,7 +534,13 @@ class ExperimentWatcher(Generic[TExperimentConfig, TExperiment]):
         return "running"
 
     def get_run_args(self, info: TExperimentConfig):
-        return [sys.executable] + list(self.args_fn(self.experiment, info))
+        return [sys.executable] + list(
+            self.args_fn(
+                self.experiment,
+                info,
+                self.get_experiment_dir(info, self.experiment_dir),
+            )
+        )
 
 
 def run_subprocess_into_file(
@@ -619,7 +625,7 @@ class HashingExperimentWatcher(ExperimentWatcher[TExperimentConfig, TExperiment]
 
 def do_experiments(
     experiment: TExperiment,
-    args_fn: Callable[[TExperiment, TExperimentConfig], Sequence[str]],
+    args_fn: Callable[[TExperiment, TExperimentConfig, Path], Sequence[str]],
     config_type: type[TExperimentConfig] = OrderedDict,
     date: datetime | None = None,
     gpus_per_job: int = 1,
