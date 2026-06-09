@@ -1380,7 +1380,7 @@ def do_train(
                 break
 
     args.done = True
-    energy_info = watcher.wait_until_finish()
+    energy_info = watcher.wait_until_finish() if watcher is not None else None
     if energy_info is not None:
         total_energy = energy_info.train_energy + energy_info.validation_energy
 
@@ -1389,7 +1389,7 @@ def do_train(
             f"{format_to_energy_usage(energy_info.train_energy).strip()} for train, "
             f"{format_to_energy_usage(energy_info.validation_energy).strip()} for validation)"
         )
-    else:
+    elif watcher is not None:
         logger.warning("Watcher failed, could not retrieve energy usage statistics")
 
     if job_config.parallelize.dp_mode != "none":
