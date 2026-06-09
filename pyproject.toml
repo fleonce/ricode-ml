@@ -43,3 +43,8 @@ include = ["ricode*"]
 [build-system]
 requires = ["setuptools>=42"]
 build-backend = "setuptools.build_meta"
+
+[dependency-groups]
+dev = [
+    "pandas>=2.3.3",
+]

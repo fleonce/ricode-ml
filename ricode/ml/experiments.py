@@ -45,7 +45,7 @@ from ricode.ml.training_types import AttrsClass
 from ricode.utils import format_datetime
 from ricode.utils.hashing import mapping_to_hash
 from ricode.utils.imports import is_pandas_available
-
+from ricode.utils.path import make_path
 
 if is_pandas_available():
     import pandas as pd
@@ -282,7 +282,15 @@ class ExperimentWatcher(Generic[TExperimentConfig, TExperiment]):
 
         def to_dataframe(
             self, keys: Sequence[str]
-        ) -> tuple[pd.DataFrame, pd.DataFrame]:
+        ) -> pd.DataFrame:
+            """
+            Return the results of the experiment as a DataFrame object.
+            Args:
+                keys: A sequence of keys to be included from the results
+
+            Returns: the DataFrame
+            """
+
             keys = list(keys)
             for key in attr.fields_dict(type(self.experiment)).keys():
                 if getattr(self.experiment, key):
@@ -625,23 +633,24 @@ class HashingExperimentWatcher(ExperimentWatcher[TExperimentConfig, TExperiment]
 
 def do_experiments(
     experiment: TExperiment,
+    directory: Path | None,
     args_fn: Callable[[TExperiment, TExperimentConfig, Path], Sequence[str]],
     config_type: type[TExperimentConfig] = OrderedDict,
     date: datetime | None = None,
     gpus_per_job: int = 1,
-):
+) -> HashingExperimentWatcher[TExperimentConfig, TExperiment]:
     os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
 
-    if date is None:
-        date = datetime.now()
-
-    experiment_dir = Path("experiments") / format_datetime(date)
-    experiment_dir.mkdir(parents=True, exist_ok=True)
+    if directory is None:
+        if date is None:
+            date = datetime.now()
+        directory = make_path("experiments") / format_datetime(date)
+    directory.mkdir(parents=True, exist_ok=True)
 
     log_handlers = [
         logging.StreamHandler(sys.stdout),
         logging.FileHandler(
-            experiment_dir / f"run_experiment_rank{distributed_rank()}.log", "a"
+            directory / f"run_experiment_rank{distributed_rank()}.log", "a"
         ),
     ]
 
@@ -654,13 +663,15 @@ def do_experiments(
     logger = logging.getLogger("run_experiment")
 
     with HashingExperimentWatcher(
-        experiment_dir,
+        directory,
         experiment,
         args_fn,
         logger,
         config_type,
         gpus_per_job=gpus_per_job,
     ) as watcher:
-        logger.info(f"Starting experiment cycle in {experiment_dir}")
+        logger.info(f"Starting experiment cycle in {directory}")
         watcher.run()
         watcher.summary()
+
+    return watcher
