@@ -3,6 +3,7 @@ import os
 import pathlib
 import pickle
 import typing
+import warnings
 from collections import OrderedDict
 from typing import (
     Any,
@@ -119,6 +120,8 @@ class FlattenedDataset:
         self.max_binsize = max_binsize
         self.binsizes = binsizes
         self.binsize_hints = binsize_hints or {}
+        if len(self.binsize_hints) > 0:
+            assert all(isinstance(v, int) and v > 1 for v in self.binsize_hints.values()), binsize_hints
 
     @property
     def device(self) -> torch.device:
@@ -282,7 +285,7 @@ class FlattenedDataset:
         if binsize is None:
             binsize = self.binsizes[key]
 
-        new_bin = torch.zeros((binsize, *shape), device=device, dtype=dtype)
+        new_bin = torch.empty((binsize, *shape), device=device, dtype=dtype)
         index = len(self.bins[key])
         self.bins[key][index] = new_bin
         self.tensors[key + "." + str(index)] = new_bin
@@ -409,6 +412,10 @@ class FlattenedDataset:
                 num_inner_elements = math.prod(tensor_shape)
                 hint = self.binsize_hints.get(key, 2**14)
                 binsize = hint // num_inner_elements
+                if binsize < 2:
+                    warnings.warn(f"The binsize chosen for key {key!r} is too small {hint}, expect degraded performance")
+                    binsize = 2
+                assert binsize > 1, (self.binsize_hints, num_inner_elements, tensor.shape)
                 self.binsizes[key] = binsize
 
             # create a new bin with everything we know!
@@ -431,35 +438,42 @@ class FlattenedDataset:
                 )
 
         binsize = self.binsizes[key]
-        if this_sequence_length >= binsize:
-            raise NotImplementedError
+        assert binsize > 0, self.binsizes
 
         cumulative_lengths = self.cumulative_lengths[key]
         bins = self.bins[key]
-        num_bins = len(bins)
 
         active_position = cumulative_lengths[-1] % binsize
-        new_position = active_position + this_sequence_length
-        must_split = new_position >= binsize
-        last_bin = bins[num_bins - 1]
-        if not must_split:
-            last_bin[active_position : active_position + this_sequence_length] = tensor
-            if (new_position % binsize) == 0:
-                # appending the tensor exactly reached the end of the current bin, advance to the next bin
-                self._new_bin(key)
-        else:
-            sequence_length_next_bin = new_position % binsize
-            sequence_length_this_bin = this_sequence_length - sequence_length_next_bin
-            last_bin[active_position : active_position + sequence_length_this_bin] = (
-                tensor[:sequence_length_this_bin]
-            )
-            # we reached the end of the bin in the middle of the current latent, split it up :)
-            self._new_bin(key)
-            # todo: if the bin is smaller than the introduced element, handle copying in a loop
-            last_bin = bins[len(bins) - 1]
-            # ... and copy the rest of the data!
-            last_bin[:sequence_length_next_bin] = tensor[sequence_length_this_bin:]
+        must_split = active_position + this_sequence_length >= binsize
+        curr_bin = cumulative_lengths[-1] // binsize
+        assert curr_bin + 1 == len(bins), (curr_bin, len(bins), cumulative_lengths, binsize, must_split)
+        new_bin = (cumulative_lengths[-1] + this_sequence_length) // binsize
+        # assert False, (curr_bin, new_bin)
 
+        if must_split:
+            # prepare empty tensor bins
+            for _ in range(curr_bin, new_bin):
+                self._new_bin(key)
+
+        # iteratively insert the elements into the dataset
+        pos = 0
+        storage_pos = cumulative_lengths[-1]
+        while pos < this_sequence_length:
+            # calc how many elements are remaining that must be inserted
+            remaining = this_sequence_length - pos
+            # calc how many elements can be inserted at this step
+            available = binsize - (storage_pos % binsize)
+            n_insert = min(remaining, available)
+            target = bins[storage_pos // binsize]
+            insert_start = storage_pos % binsize
+            assert insert_start + n_insert <= target.size(0)
+            insert_end = insert_start + n_insert
+            target[insert_start:insert_end] = tensor[pos:pos+n_insert]
+
+            pos += n_insert
+            storage_pos += n_insert
+
+        # update our knowledge on the cumulative length of an element
         cumulative_lengths.append(cumulative_lengths[-1] + this_sequence_length)
 
     def save_to_disk(self, foldername: str | pathlib.Path):

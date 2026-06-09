@@ -5,6 +5,7 @@ from typing import Sequence
 import torch
 
 from ricode.ml.datasets.cumulative import FlattenedDataset
+from tools.tensors import test_dataset_equal
 from tools import foreach
 
 PROBLEM_SIZE = 1000
@@ -17,6 +18,8 @@ DEFAULT_DTYPES = (
     torch.int64,
     torch.int8,
 )
+# first element in each tuple is the number of samples,
+# the rest are the inner dimensions of the data, i.e., sequence length, etc.
 DEFAULT_PROBLEM_SIZES = (
     (1000, 100),
     (
@@ -117,6 +120,7 @@ class FlattenedDatasetTestCase(unittest.TestCase):
                     }
                 )
             self.assertEqual(len(dataset), len(data))
+            test_dataset_equal(self, dataset, "tensor", data)
 
             dataset.save_to_disk(tempdir)
             loaded_dataset = FlattenedDataset.from_preprocessed(tempdir)
@@ -135,3 +139,29 @@ class FlattenedDatasetTestCase(unittest.TestCase):
                     torch.equal(loaded_dataset[i]["tensor"], data[i]),
                     "Expected tensors to match exactly, difference detected",
                 )
+
+    @foreach(
+        problem_size=DEFAULT_PROBLEM_SIZES,
+        dtype=DEFAULT_DTYPES,
+        varying_sequence_length=(True, False),
+        device=DEFAULT_DEVICES,
+    )
+    def test_insert_longer_than_binsize(
+        self,
+        problem_size: Sequence[int],
+        dtype: torch.dtype,
+        device: torch.device,
+        varying_sequence_length: bool,
+    ):
+        data = craft_random_ndim_data(
+            problem_size,
+            dtype,
+            device,
+            varying_sequence_length,
+        )
+
+        dataset = FlattenedDataset.new_empty({"tensor": problem_size[0] // 2})
+        for tensor in data:
+            dataset.append({"tensor": tensor})
+
+        test_dataset_equal(self, dataset, "tensor", data)

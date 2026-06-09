@@ -33,6 +33,13 @@ repository = "https://github.com/fleonce/ricode-ml"
 [project.scripts]
 brrrrrrrr = "ricode:distributed.launch"
 
+[tool.uv]
+package = true
+
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["ricode*"]
+
+[build-system]
+requires = ["setuptools>=42"]
+build-backend = "setuptools.build_meta"
