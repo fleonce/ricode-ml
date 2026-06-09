@@ -290,8 +290,12 @@ class ExperimentWatcher(Generic[TExperimentConfig, TExperiment]):
 
             Returns: the DataFrame
             """
+            include_all_keys = False
 
             keys = list(keys)
+            if len(keys) == 0:
+                include_all_keys = True
+
             for key in attr.fields_dict(type(self.experiment)).keys():
                 if getattr(self.experiment, key):
                     keys = ["experiment___" + key] + keys
@@ -309,6 +313,10 @@ class ExperimentWatcher(Generic[TExperimentConfig, TExperiment]):
                     experiment_json = json.load(f)
 
                 metrics = copy.deepcopy(experiment_json["test_metrics"])
+                if include_all_keys:
+                    for key in metrics.keys():
+                        if key not in keys:
+                            keys.append(key)
                 for key, value in experiment.items():
                     metrics["experiment___" + key] = value
                 for key in keys:
