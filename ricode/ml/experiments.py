@@ -281,9 +281,7 @@ class ExperimentWatcher(Generic[TExperimentConfig, TExperiment]):
 
     if is_pandas_available():
 
-        def to_dataframe(
-            self, keys: Sequence[str]
-        ) -> pd.DataFrame:
+        def to_dataframe(self, keys: Sequence[str]) -> pd.DataFrame:
             """
             Return the results of the experiment as a DataFrame object.
             Args:
@@ -651,6 +649,7 @@ class HashingExperimentWatcher2(ExperimentWatcher[TExperimentConfig, TExperiment
     def compute_run_info(self) -> Generator[OrderedDict[str, Any], None, None]:
         yield from experiment_config_to_override_configs(self.config_path)
 
+
 def do_experiments(
     experiment: TExperiment,
     directory: Path | None,
@@ -707,7 +706,9 @@ def unstack_mapping(mapping: Any, stack: Sequence[str]):
     return unstack_mapping(mapping[stack[0]], stack[1:])
 
 
-def modifiers_from_mapping(content: Mapping[str, Any], stack: Sequence[str] | None = None):
+def modifiers_from_mapping(
+    content: Mapping[str, Any], stack: Sequence[str] | None = None
+):
     if stack is None:
         stack = []
 
@@ -727,24 +728,41 @@ def modifiers_from_mapping(content: Mapping[str, Any], stack: Sequence[str] | No
                 if not isinstance(value["$overrides"], list):
                     raise ValueError(modifier_key, type(value["$overrides"]))
 
-                overrides = []
-                for override in value["$overrides"]:
-                    if isinstance(override, list):
-                        raise NotImplementedError("nested override lists")
-                    elif isinstance(override, str):
-                        override_content = load_json_file_type(override)
-                        if stack:
-                            override_content = unstack_mapping(override_content, stack)
-                        overrides.append(override_content)
-                    else:
-                        overrides.append(override)
-                modifiers.append((modifier_key, overrides))
+                if isinstance(value["$overrides"], list):
+                    # nested lists of overrides
+                    for outer in value["$overrides"]:
+                        overrides = []
+                        for override in outer:
+                            if isinstance(override, str):
+                                override_content = load_json_file_type(override)
+                                if stack:
+                                    override_content = unstack_mapping(
+                                        override_content, stack
+                                    )
+                                overrides.append(override_content)
+                            else:
+                                overrides.append(override)
+                        modifiers.append((modifier_key, overrides))
+                else:
+                    overrides = []
+                    for override in value["$overrides"]:
+                        if isinstance(override, str):
+                            override_content = load_json_file_type(override)
+                            if stack:
+                                override_content = unstack_mapping(
+                                    override_content, stack
+                                )
+                            overrides.append(override_content)
+                        else:
+                            overrides.append(override)
+                    modifiers.append((modifier_key, overrides))
 
             value_copy = dict(value)
             value_copy.pop("$overrides", None)
             modifiers.extend(modifiers_from_mapping(value_copy, stack + [key]))
 
     return modifiers
+
 
 def modifiers_to_override_configs(
     modifiers: Sequence[tuple[str, list[Mapping[str, Any]]]]
@@ -777,6 +795,7 @@ def modifiers_to_override_configs(
             temp[intermediates[-1]] = value
         yield override_config
 
+
 def experiment_config_to_override_configs(config_path: Path):
     content = load_json_file_type(config_path)
 
@@ -787,6 +806,7 @@ def experiment_config_to_override_configs(config_path: Path):
     modifiers.sort(key=lambda x: (x[0].count("."), x[0]))
 
     yield from modifiers_to_override_configs(modifiers)
+
 
 def do_experiments_from_config(
     experiment_config: str | Path,
