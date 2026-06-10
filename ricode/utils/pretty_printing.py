@@ -99,13 +99,7 @@ def pretty_print_dict(
 
     for key in keys:
         value = inp[key]
-
-        if isinstance(value, Mapping):
-            value = pretty_print_dict(value)
-        elif isinstance(value, (Sequence, set)):
-            value = pretty_print_sequence(value)
-        else:
-            value = pretty_print_primitive(value)
+        value = pretty_print_primitive(value)
 
         value = key + ": " + value
         out += "\n" + _line_spacing(value) + ","
