@@ -13,6 +13,17 @@ from ricode.utils.types import ReturnsGeneratorProtocol
 TAny = TypeVar("TAny")
 
 
+def load_json_file_type(file_path: str | pathlib.Path):
+    file_name = file_path if isinstance(file_path, str) else file_path.name
+    with open(file_path, "r") as f:
+        if file_name.endswith(".jsonl"):
+            return list(iterate_json_file_type(file_path))
+        elif file_name.endswith(".json5"):
+            return pyjson5.load(f)
+        else:
+            return json.load(f)
+
+
 def iterate_json_file_type(
     file_path: str | pathlib.Path,
 ) -> Generator[Any, None, None]:
