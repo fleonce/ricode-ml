@@ -639,9 +639,6 @@ class HashingExperimentWatcher(ExperimentWatcher[TExperimentConfig, TExperiment]
         experiment_hash = mapping_to_hash(cleanup_info)
         return base_dir / ("ex_" + experiment_hash)
 
-@attrs.define
-class EmptyExperiment:
-    value: int = 42
 
 @attrs.define
 class HashingExperimentWatcher2(ExperimentWatcher[TExperimentConfig, TExperiment]):
@@ -793,6 +790,7 @@ def experiment_config_to_override_configs(config_path: Path):
 
 def do_experiments_from_config(
     experiment_config: str | Path,
+    experiment: TExperiment,
     directory: Path | None,
     args_fn: Callable[[TExperiment, TExperimentConfig, Path], Sequence[str]],
     config_type: type[TExperimentConfig] = OrderedDict,
@@ -824,7 +822,7 @@ def do_experiments_from_config(
 
     with HashingExperimentWatcher2(
         directory,
-        EmptyExperiment(),
+        experiment,
         args_fn,
         logger,
         OrderedDict(),
