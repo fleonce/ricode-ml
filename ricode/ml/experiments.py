@@ -735,10 +735,9 @@ def modifiers_from_mapping(
                         for override in outer:
                             if isinstance(override, str):
                                 override_content = load_json_file_type(override)
-                                if stack:
-                                    override_content = unstack_mapping(
-                                        override_content, stack
-                                    )
+                                override_content = unstack_mapping(
+                                    override_content, stack + [key]
+                                )
                                 overrides.append(override_content)
                             else:
                                 overrides.append(override)
