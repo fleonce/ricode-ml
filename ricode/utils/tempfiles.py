@@ -1,6 +1,6 @@
 import atexit
 import shutil
-from tempfile import mkdtemp
+from tempfile import mkdtemp, mktemp, mkstemp
 from typing import Literal
 
 import attrs
@@ -19,4 +19,22 @@ class TemporaryDirectory:
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         if self.delete_at == "context-exit":
+            shutil.rmtree(self.name)
+
+
+@attrs.define
+class TemporaryFile:
+    delete_at: Literal["content-exit", "exit"] = "exit"
+    suffix: str | None = None
+    name: str = attrs.field(default=None, init=False)
+    fd: int = attrs.field(default=None, init=False)
+
+    def __enter__(self) -> tuple[int, str]:
+        self.fd, self.name = mkstemp(self.suffix)
+        if self.delete_at == "exit":
+            atexit.register(shutil.rmtree, self.name)
+        return self.fd, self.name
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if self.delete_at == "content-exit":
             shutil.rmtree(self.name)
