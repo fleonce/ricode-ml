@@ -798,7 +798,7 @@ def do_experiments_from_config(
     config_type: type[TExperimentConfig] = OrderedDict,
     date: datetime | None = None,
     gpus_per_job: int = 1,
-) -> HashingExperimentWatcher2[TExperiment]:
+) -> HashingExperimentWatcher2[TExperimentConfig, TExperiment]:
     os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
 
     if directory is None:
