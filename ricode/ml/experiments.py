@@ -792,7 +792,12 @@ def modifiers_to_override_configs(
             temp = override_config
             for intermediate in intermediates[:-1]:
                 temp = temp[intermediate]
-            temp[intermediates[-1]] = value
+            if isinstance(temp[intermediates[-1]], Mapping) and isinstance(
+                value, Mapping
+            ):
+                temp[intermediates[-1]].update(value)
+            else:
+                temp[intermediates[-1]] = value
         yield override_config
 
 
