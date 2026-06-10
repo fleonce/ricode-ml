@@ -45,6 +45,7 @@ from ricode.ml.training_types import AttrsClass
 from ricode.utils import format_datetime
 from ricode.utils.hashing import mapping_to_hash
 from ricode.utils.imports import is_pandas_available
+from ricode.utils.json_files import load_json_file_type
 from ricode.utils.path import make_path
 
 if is_pandas_available():
@@ -638,6 +639,20 @@ class HashingExperimentWatcher(ExperimentWatcher[TExperimentConfig, TExperiment]
         experiment_hash = mapping_to_hash(cleanup_info)
         return base_dir / ("ex_" + experiment_hash)
 
+@attrs.define
+class EmptyExperiment:
+    value: int = 42
+
+@attrs.define
+class HashingExperimentWatcher2(ExperimentWatcher[TExperimentConfig, TExperiment]):
+    config_path: str | Path | None = None
+
+    def get_experiment_dir(self, info: OrderedDict[str, Any], base_dir: Path) -> Path:
+        experiment_hash = mapping_to_hash(info)
+        return base_dir / ("ex_" + experiment_hash)
+
+    def compute_run_info(self) -> Generator[OrderedDict[str, Any], None, None]:
+        yield from experiment_config_to_override_configs(self.config_path)
 
 def do_experiments(
     experiment: TExperiment,
@@ -677,6 +692,144 @@ def do_experiments(
         logger,
         config_type,
         gpus_per_job=gpus_per_job,
+    ) as watcher:
+        logger.info(f"Starting experiment cycle in {directory}")
+        watcher.run()
+        watcher.summary()
+
+    return watcher
+
+
+def unstack_mapping(mapping: Any, stack: Sequence[str]):
+    if not stack:
+        return mapping
+
+    if not isinstance(mapping, Mapping):
+        raise ValueError(mapping, stack)
+
+    return unstack_mapping(mapping[stack[0]], stack[1:])
+
+
+def modifiers_from_mapping(content: Mapping[str, Any], stack: Sequence[str] | None = None):
+    if stack is None:
+        stack = []
+
+    modifiers = []
+    for key, value in content.items():
+        if not isinstance(value, (list, dict)):
+            continue
+
+        modifier_key = key
+        if stack:
+            modifier_key = ".".join(stack) + "." + modifier_key
+        if isinstance(value, list):
+            # easy case, possible values are given as a list
+            modifiers.append((modifier_key, value))
+        else:  # isinstance(value, dict)
+            if "$overrides" in value:
+                if not isinstance(value["$overrides"], list):
+                    raise ValueError(modifier_key, type(value["$overrides"]))
+
+                overrides = []
+                for override in value["$overrides"]:
+                    if isinstance(override, list):
+                        raise NotImplementedError("nested override lists")
+                    elif isinstance(override, str):
+                        override_content = load_json_file_type(override)
+                        if stack:
+                            override_content = unstack_mapping(override_content, stack)
+                        overrides.append(override_content)
+                    else:
+                        overrides.append(override)
+                modifiers.append((modifier_key, overrides))
+
+            value_copy = dict(value)
+            value_copy.pop("$overrides", None)
+            modifiers.extend(modifiers_from_mapping(value_copy, stack + [key]))
+
+    return modifiers
+
+def modifiers_to_override_configs(
+    modifiers: Sequence[tuple[str, list[Mapping[str, Any]]]]
+) -> Generator[OrderedDict[str, Any], None, None]:
+    skeleton = OrderedDict()
+    for modifier, _ in modifiers:
+        if "." not in modifier:
+            skeleton[modifier] = None
+        else:
+            intermediates = modifier.split(".")
+            temp = skeleton
+            for pos, intermediate in enumerate(intermediates):
+                value = OrderedDict() if pos + 1 != len(intermediates) else None
+                if intermediate in temp:
+                    if temp[intermediate] is None:
+                        temp[intermediate] = temp = value
+                    else:
+                        temp = temp[intermediate]
+                else:
+                    temp[intermediate] = temp = value
+
+    for values in itertools.product(*list(map(lambda x: x[1], modifiers))):
+        override_config = copy.deepcopy(skeleton)
+        keys = list(map(lambda x: x[0], modifiers))
+        for modifier, value in zip(keys, values):
+            intermediates = modifier.split(".")
+            temp = override_config
+            for intermediate in intermediates[:-1]:
+                temp = temp[intermediate]
+            temp[intermediates[-1]] = value
+        yield override_config
+
+def experiment_config_to_override_configs(config_path: Path):
+    content = load_json_file_type(config_path)
+
+    if not isinstance(content, Mapping):
+        raise ValueError(config_path, type(content))
+
+    modifiers = modifiers_from_mapping(content, None)
+    modifiers.sort(key=lambda x: (x[0].count("."), x[0]))
+
+    yield from modifiers_to_override_configs(modifiers)
+
+def do_experiments_from_config(
+    experiment_config: str | Path,
+    directory: Path | None,
+    args_fn: Callable[[TExperiment, TExperimentConfig, Path], Sequence[str]],
+    config_type: type[TExperimentConfig] = OrderedDict,
+    date: datetime | None = None,
+    gpus_per_job: int = 1,
+) -> HashingExperimentWatcher2[TExperiment]:
+    os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
+
+    if directory is None:
+        if date is None:
+            date = datetime.now()
+        directory = make_path("experiments") / format_datetime(date)
+    directory.mkdir(parents=True, exist_ok=True)
+
+    log_handlers = [
+        logging.StreamHandler(sys.stdout),
+        logging.FileHandler(
+            directory / f"run_experiment_rank{distributed_rank()}.log", "a"
+        ),
+    ]
+
+    logging.basicConfig(
+        format="%(asctime)s - %(levelname)s - %(message)s",
+        datefmt="%m/%d/%Y %H:%M:%S",
+        level=logging.INFO,
+        handlers=log_handlers,
+    )
+    logger = logging.getLogger("run_experiment")
+
+    with HashingExperimentWatcher2(
+        directory,
+        EmptyExperiment(),
+        args_fn,
+        logger,
+        OrderedDict(),
+        gpus_per_job=gpus_per_job,
+        config_path=experiment_config,
     ) as watcher:
         logger.info(f"Starting experiment cycle in {directory}")
         watcher.run()
