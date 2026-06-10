@@ -42,6 +42,10 @@ def pretty_print_primitive(value: Any) -> str:
         if str(type(value)) == "<class 'torch.Tensor'>":
             if value.numel() == 1:
                 return pretty_print_primitive(value.item())
+        elif isinstance(value, Mapping):
+            return pretty_print_dict(value)
+        elif isinstance(value, Iterable):
+            return pretty_print_iterable(value)
         raise NotImplementedError(type(value))
     if isinstance(value, (int, bool)):
         return str(value)
