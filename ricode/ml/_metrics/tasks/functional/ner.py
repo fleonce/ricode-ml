@@ -156,7 +156,7 @@ def token_labels_to_word_labels(
 
     id2label = bio_id2label(entity_types)
 
-    num_words = max(word_ids, key=lambda w: 0 if w is None else w)
+    num_words = max(map(lambda w: 0 if w is None else w, word_ids))
     word_labels = ["O"] * (num_words + 1)
     last_word_id = None
     for label, word_id in zip(labels, word_ids):
