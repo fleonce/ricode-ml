@@ -386,7 +386,7 @@ class ExperimentWatcher(Generic[TExperimentConfig, TExperiment]):
                 self.delete_run(info)
                 self.stop_iteration = True
                 print("Received KeyboardInterrupt, aborting ...")
-                sleep(1)
+                continue
             except Exception:
                 self.delete_run(info)
                 self.logger.info(
@@ -517,10 +517,8 @@ class ExperimentWatcher(Generic[TExperimentConfig, TExperiment]):
                 )
                 return output.returncode == 0
         except KeyboardInterrupt:
-            self.logger.info("Received KeyboardInterrupt, aborting training process")
             self.delete_run_file(experiment_run_file)
             self.delete_run_file(experiment_done_file)
-            sleep(1)
             raise
 
     def delete_run(self, info: TExperimentConfig):
