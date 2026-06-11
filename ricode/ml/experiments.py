@@ -401,7 +401,7 @@ class ExperimentWatcher(Generic[TExperimentConfig, TExperiment]):
                     self.logger.info(".")
                     sleep(1)
             except KeyboardInterrupt:
-                pass
+                self.stop_iteration = True
 
             if not successful:
                 self.delete_run(info)
