@@ -710,7 +710,7 @@ def resolve_wildcard_override_file_path(file_path: str) -> list[str]:
     matched_files = glob.glob(file_path, recursive=True)
     if not matched_files:
         return [file_path]
-    return matched_files
+    return list(sorted(matched_files))
 
 def resolve_override_configs_for_file_path(file_path: str, stack: Sequence[str]) -> list[Mapping[str, Any]]:
     configs = resolve_wildcard_override_file_path(file_path)
