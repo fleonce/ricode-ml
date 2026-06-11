@@ -52,6 +52,19 @@ def bio_id2label(entity_types: Sequence[str]) -> Mapping[int, str]:
     return {i: k for i, k in enumerate(bio_labels_for_entity_types(entity_types))}
 
 
+def bio_labels_to_entity_types(bio: Mapping[int, str] | Sequence[str]):
+    if isinstance(bio, Mapping):
+        values = bio.values()
+    else:
+        values = bio
+    names = set()
+    for name in values:
+        if name == "O":
+            continue
+        names.add(name.split("-", maxsplit=1)[1])
+    return list(sorted(names))
+
+
 def spans_to_word_labels(
     sample: JsonSample, entity_types: Sequence[str]
 ) -> Sequence[str]:
