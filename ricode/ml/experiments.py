@@ -1,6 +1,7 @@
 import copy
 import dataclasses
 import enum
+import glob
 import itertools
 import json
 import logging
@@ -704,6 +705,23 @@ def unstack_mapping(mapping: Any, stack: Sequence[str]):
     return unstack_mapping(mapping[stack[0]], stack[1:])
 
 
+def resolve_wildcard_override_file_path(file_path: str) -> list[str]:
+    file_path = os.path.expanduser(file_path)
+    matched_files = glob.glob(file_path, recursive=True)
+    if not matched_files:
+        return [file_path]
+    return matched_files
+
+def resolve_override_configs_for_file_path(file_path: str, stack: Sequence[str]) -> list[Mapping[str, Any]]:
+    configs = resolve_wildcard_override_file_path(file_path)
+    overrides = []
+    for config in configs:
+        override_content = load_json_file_type(config)
+        override_content = unstack_mapping(override_content, stack)
+        overrides.append(override_content)
+    return overrides
+
+
 def modifiers_from_mapping(
     content: Mapping[str, Any], stack: Sequence[str] | None = None
 ):
@@ -732,11 +750,8 @@ def modifiers_from_mapping(
                         overrides = []
                         for override in outer:
                             if isinstance(override, str):
-                                override_content = load_json_file_type(override)
-                                override_content = unstack_mapping(
-                                    override_content, stack + [key]
-                                )
-                                overrides.append(override_content)
+                                resolved_overrides = resolve_override_configs_for_file_path(override, stack + [key])
+                                overrides.extend(resolved_overrides)
                             else:
                                 overrides.append(override)
                         modifiers.append((modifier_key, overrides))
@@ -744,12 +759,8 @@ def modifiers_from_mapping(
                     overrides = []
                     for override in value["$overrides"]:
                         if isinstance(override, str):
-                            override_content = load_json_file_type(override)
-                            if stack:
-                                override_content = unstack_mapping(
-                                    override_content, stack
-                                )
-                            overrides.append(override_content)
+                            resolved_overrides = resolve_override_configs_for_file_path(override, stack + [key])
+                            overrides.extend(resolved_overrides)
                         else:
                             overrides.append(override)
                     modifiers.append((modifier_key, overrides))
