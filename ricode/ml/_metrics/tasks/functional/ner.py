@@ -1,15 +1,18 @@
 import sys
 import warnings
-from typing import Literal, Mapping, Optional, Sequence
+from typing import Literal, Mapping, Optional, Sequence, TypeAlias
 
 import torch
 
 from ricode.ml._metrics import Span
 from ricode.ml._metrics.tasks.ner import NamedEntity
-from ricode.ml._preprocessing.bio import JsonEntity, JsonSample
+from ricode.ml._preprocessing.bio import BIOSample, JsonEntity, JsonSample
 from ricode.typing_utils.protocols import SupportsToList
 from ricode.utils.mappings import inverse
 from ricode.utils.types import raise_if_none
+
+
+ErrorHandlingT: TypeAlias = Literal["ignore", "warning", "error"]
 
 
 def batched_token_labels_to_spans(
@@ -312,3 +315,20 @@ def named_entities_to_spans(
         )
         for entity in named_entities
     ]
+
+
+def word_sample_to_spans_sample(
+    sample: BIOSample,
+    entity_types: Sequence[str],
+    error_handling: ErrorHandlingT,
+) -> JsonSample:
+    def _is_str(x: str | int) -> str:
+        assert isinstance(x, str)
+        return x
+
+    tags = [_is_str(tag) for tag in sample["tags"]]
+
+    return {
+        "tokens": sample["tokens"],
+        "entities": word_labels_to_spans(tags, entity_types, error_handling),
+    }
