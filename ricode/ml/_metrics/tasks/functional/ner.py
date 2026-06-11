@@ -1,3 +1,4 @@
+import itertools
 import sys
 import warnings
 from typing import Literal, Mapping, Optional, Sequence, TypeAlias
@@ -332,3 +333,16 @@ def word_sample_to_spans_sample(
         "tokens": sample["tokens"],
         "entities": word_labels_to_spans(tags, entity_types, error_handling),
     }
+
+
+def are_named_entities_flat(named_entities: Sequence[NamedEntity]) -> bool:
+    return are_spans_flat(named_entities)
+
+
+def are_spans_flat(spans: Sequence[JsonEntity]) -> tuple[JsonEntity, JsonEntity] | None:
+    for (i, span), (j, another_span) in itertools.product(
+        enumerate(spans), enumerate(spans)
+    ):
+        if span["start"] < another_span["end"] <= span["end"] and i != j:
+            return span, another_span
+    return None
