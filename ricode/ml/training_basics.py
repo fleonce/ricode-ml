@@ -747,6 +747,11 @@ class Batch(dict[str, Tensor]):
             self[key] = _to_device(tensor, device, non_blocking)
         return self
 
+    def pin_memory(self):
+        for key, tensor in self.items():
+            self[key] = tensor.pin_memory()
+        return self
+
     def with_prefix(self, prefix: str):
         out = self.__class__()
         for k, v in self.items():
