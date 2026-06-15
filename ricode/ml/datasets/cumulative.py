@@ -121,7 +121,9 @@ class FlattenedDataset:
         self.binsizes = binsizes
         self.binsize_hints = binsize_hints or {}
         if len(self.binsize_hints) > 0:
-            assert all(isinstance(v, int) and v > 1 for v in self.binsize_hints.values()), binsize_hints
+            assert all(
+                isinstance(v, int) and v > 1 for v in self.binsize_hints.values()
+            ), binsize_hints
 
     @property
     def device(self) -> torch.device:
@@ -294,9 +296,6 @@ class FlattenedDataset:
         self,
         key: str,
     ):
-        if len(self.py_bins[key]) > 0:
-            for bin in self.py_bins[key].values():
-                assert len(bin) == PY_BINSIZE
         index = len(self.py_bins[key])
         new_bin = []
         self.py_bins[key][index] = new_bin
@@ -322,8 +321,9 @@ class FlattenedDataset:
                     not isinstance(tensors[key], torch.Tensor)
                     and isinstance(tensors[key], Sequence)
                     and not isinstance(tensors[key], np.ndarray)
-                    and not isinstance(tensors[key][0], (int, float))
+                    and not isinstance(tensors[key][0], (bool, int, float))
                 ):
+                    assert not isinstance(tensors[key][0], bool), tensors[key]
                     # this is a pure py object, handle differently
                     self.py_bins[key] = {}
                     self.py_keys.add(key)
@@ -374,24 +374,36 @@ class FlattenedDataset:
 
         active_position = cumulative_lengths[-1] % binsize
         new_position = active_position + this_sequence_length
-        must_split = new_position >= binsize
+        curr_bin = cumulative_lengths[-1] // binsize
+        assert curr_bin + 1 == len(bins)
+        new_bin = (cumulative_lengths[-1] + this_sequence_length) // binsize
+        must_split = new_bin > curr_bin
+        assert must_split == (new_position >= binsize)
         last_bin = bins[num_bins - 1]
-        if not must_split:
-            last_bin[active_position : active_position + this_sequence_length] = l
-        else:
-            items_in_last_bin = binsize - active_position
-            last_bin[active_position:binsize] = l[:items_in_last_bin]
-            remainder = l[items_in_last_bin:]
-            while len(remainder) > 0:
-                assert len(last_bin) == PY_BINSIZE
+
+        if must_split:
+            for _ in range(curr_bin, new_bin):
                 self._new_py_bin(key)
-                last_bin = bins[len(bins) - 1]
-                if len(remainder) >= binsize:
-                    last_bin[:] = remainder[:binsize]
-                    remainder = remainder[binsize:]
-                else:
-                    last_bin[0 : len(remainder)] = remainder
-                    remainder = []
+
+        # iteratively insert the elements into the dataset
+        pos = 0
+        storage_pos = cumulative_lengths[-1]
+        while pos < this_sequence_length:
+            # calc how many elements are remaining that must be inserted
+            remaining = this_sequence_length - pos
+            # calc how many elements can be inserted at this step
+            available = binsize - (storage_pos % binsize)
+            n_insert = min(remaining, available)
+            target = bins[storage_pos // binsize]
+            insert_start = storage_pos % binsize
+            assert insert_start + n_insert <= binsize
+            insert_end = insert_start + n_insert
+            target[insert_start:insert_end] = l[pos : pos + n_insert]
+
+            pos += n_insert
+            storage_pos += n_insert
+
+        # update our knowledge on the cumulative length of an element
         cumulative_lengths.append(cumulative_lengths[-1] + this_sequence_length)
 
     def _append(
@@ -413,9 +425,15 @@ class FlattenedDataset:
                 hint = self.binsize_hints.get(key, 2**14)
                 binsize = hint // num_inner_elements
                 if binsize < 2:
-                    warnings.warn(f"The binsize chosen for key {key!r} is too small {hint}, expect degraded performance")
+                    warnings.warn(
+                        f"The binsize chosen for key {key!r} is too small {hint}, expect degraded performance"
+                    )
                     binsize = 2
-                assert binsize > 1, (self.binsize_hints, num_inner_elements, tensor.shape)
+                assert binsize > 1, (
+                    self.binsize_hints,
+                    num_inner_elements,
+                    tensor.shape,
+                )
                 self.binsizes[key] = binsize
 
             # create a new bin with everything we know!
@@ -446,7 +464,13 @@ class FlattenedDataset:
         active_position = cumulative_lengths[-1] % binsize
         must_split = active_position + this_sequence_length >= binsize
         curr_bin = cumulative_lengths[-1] // binsize
-        assert curr_bin + 1 == len(bins), (curr_bin, len(bins), cumulative_lengths, binsize, must_split)
+        assert curr_bin + 1 == len(bins), (
+            curr_bin,
+            len(bins),
+            cumulative_lengths,
+            binsize,
+            must_split,
+        )
         new_bin = (cumulative_lengths[-1] + this_sequence_length) // binsize
         # assert False, (curr_bin, new_bin)
 
@@ -468,7 +492,7 @@ class FlattenedDataset:
             insert_start = storage_pos % binsize
             assert insert_start + n_insert <= target.size(0)
             insert_end = insert_start + n_insert
-            target[insert_start:insert_end] = tensor[pos:pos+n_insert]
+            target[insert_start:insert_end] = tensor[pos : pos + n_insert]
 
             pos += n_insert
             storage_pos += n_insert
