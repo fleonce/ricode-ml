@@ -923,6 +923,7 @@ def do_train(
     memory_checkpoints: bool = False,
     device: Optional[str] = None,
     new_checkpoint_logic: Optional[bool] = True,
+    keep_complete_checkpointing_history: Optional[bool] = False,
     check_nan_grad_norm: bool = False,
     reproducibility_variables: Optional[Mapping[str, Any]] = None,
     hooks: Optional[Hooks] = None,
@@ -1339,6 +1340,23 @@ def do_train(
                             memory_checkpoints,
                             new_best_score,
                         )
+
+                        if new_checkpoint_logic and not keep_complete_checkpointing_history:
+                            parent_folder = Path(model_path)
+                            for file_or_folder in os.listdir(parent_folder):
+                                if (
+                                    os.path.isdir(parent_folder / file_or_folder)
+                                    and file_or_folder.startswith("step-")
+                                    and file_or_folder.count("-") == 1
+                                ):
+                                    try:
+                                        step_count = int(file_or_folder.split("-", 1)[1])
+                                        if step_count < args.train_steps:
+                                            logger.info(f"Cleaning up old checkpoint directory {parent_folder / file_or_folder}")
+                                            shutil.rmtree(parent_folder / file_or_folder)
+                                    except ValueError:
+                                        # ignore parsing errors
+                                        pass
 
                         if not memory_checkpoints:
                             save_loss_plot(
