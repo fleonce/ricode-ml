@@ -2,7 +2,7 @@ import json
 import pathlib
 import shutil
 import tempfile
-from typing import Any, Generator, Mapping, TypeVar
+from typing import Any, Generator, Mapping, TypeVar, Sequence
 
 import pyjson5
 from tqdm import tqdm
@@ -22,6 +22,20 @@ def load_json_file_type(file_path: str | pathlib.Path):
             return pyjson5.load(f)
         else:
             return json.load(f)
+
+
+def save_json_file_type(o: Sequence[Any] | Mapping[str, Any] | bool | int | float | str | None, file_path: str | pathlib.Path):
+    file_name = file_path if isinstance(file_path, str) else file_path.name
+    with open(file_path, "w") as f:
+        if file_name.endswith(".jsonl"):
+            if not isinstance(o, Sequence):
+                o = [o]
+            for element in o:
+                f.write(json.dumps(element) + "\n")
+        elif file_name.endswith(".json5"):
+            pyjson5.dump(o, f)
+        else:
+            json.dump(o, f)
 
 
 def iterate_json_file_type(
