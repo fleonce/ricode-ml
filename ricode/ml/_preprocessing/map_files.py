@@ -571,8 +571,10 @@ def map_files(
         dataset_dirs = [
             os.path.join(save_path, f"data{i}") for i in range(len(data_files))
         ]
+        filled_dataset_dirs = []
         for data_file, dataset_dir in zip(data_files, dataset_dirs):
-            for num_processed, _, num_lost in _map_data_file(
+            n_produced = 0
+            for num_processed, num_produced, num_lost in _map_data_file(
                 fn,
                 data_file,
                 dataset_dir,
@@ -586,6 +588,9 @@ def map_files(
                 progress_postfix["lost"] += num_lost
                 progress_bar.set_postfix(progress_postfix, refresh=False)
                 progress_bar.update(num_processed)
+                n_produced += num_produced
+            if n_produced > 0:
+                filled_dataset_dirs.append(dataset_dir)
         effective_world_size = 1 if progress_bar.n > 0 else 0
     else:
         dataset_dirs = [
