@@ -314,8 +314,8 @@ def _map_data_file(
     dataset_type: Literal["flattened", "safetensors"] = "flattened",
     rank: int = 0,
     world_size: int = 1,
-) -> Generator[tuple[int, int], None, None]:
-    # derive initialization to when we know the keys of the result object
+) -> Generator[tuple[int, int, int], None, None]:
+    # defer initialization to when we know the keys of the result object
     dataset = None
 
     for batch in _batches_of_data(
@@ -346,9 +346,11 @@ def _map_data_file(
             for key, values in result.items():
                 dataset[key].extend(values)
 
-        yield this_batch_size, max(this_batch_size - result_batch_size, 0)
+        yield this_batch_size, result_batch_size, max(this_batch_size - result_batch_size, 0)
 
-    if dataset_type == "flattened":
+    if dataset is None:
+        return
+    elif dataset_type == "flattened":
         dataset.save_to_disk(out_file)
     elif dataset_type == "safetensors":
         if dataset is None:
@@ -374,7 +376,8 @@ def _map_worker(
 
     while (work := in_queue.get()) is not None:
         data_file, out_file, rank, world_size = work
-        for status in _map_data_file(
+        n_created = 0
+        for (advanced, created, lost) in _map_data_file(
             fn,
             data_file,
             out_file,
@@ -387,9 +390,12 @@ def _map_worker(
             rank,
             world_size,
         ):
-            out_queue.put(status)
+            n_created += created
+            out_queue.put((advanced, lost))
         if rank == 0:
             out_queue.put(data_file)
+        if n_created > 0:
+            out_queue.put({"filled": out_file})
         del data_file, out_file, rank, world_size
 
     # report this process has finished
@@ -566,7 +572,7 @@ def map_files(
             os.path.join(save_path, f"data{i}") for i in range(len(data_files))
         ]
         for data_file, dataset_dir in zip(data_files, dataset_dirs):
-            for num_processed, num_lost in _map_data_file(
+            for num_processed, _, num_lost in _map_data_file(
                 fn,
                 data_file,
                 dataset_dir,
@@ -580,12 +586,15 @@ def map_files(
                 progress_postfix["lost"] += num_lost
                 progress_bar.set_postfix(progress_postfix, refresh=False)
                 progress_bar.update(num_processed)
+        effective_world_size = 1 if progress_bar.n > 0 else 0
     else:
         dataset_dirs = [
             os.path.join(save_path, f"data{i}_rank{rank}")
             for i in range(len(data_files))
             for rank in range(workers_per_file)
         ]
+        filled_dataset_dirs = []
+        # todo: sort this list based on dataset_dirs
 
         with (
             progress_bar,
@@ -656,6 +665,10 @@ def map_files(
                         elif isinstance(status, DataFile):
                             # thread/process has completed a data_file
                             progress_postfix["completed_files"] += 1
+                        elif isinstance(status, Mapping):
+                            if "filled" in status:
+                                # a worker has filled a specified dataset_dir with data
+                                filled_dataset_dirs.append(status["filled"])
                         else:
                             raise NotImplementedError(status)
                         jobs_ready = sum(
@@ -687,12 +700,22 @@ def map_files(
             pool.close()
             pool.join()
 
+        effective_world_size = len(filled_dataset_dirs)
+
+    if effective_world_size < len(dataset_dirs):
+        warnings.warn(
+            f"Suboptimal choice of {workers_per_file=} and {num_proc=} lead to idling workers. "
+            f"Out of {len(dataset_dirs)} jobs, only {effective_world_size} jobs produced data",
+        )
+
     with open(os.path.join(save_path, "dataset_info.json"), "w") as info_f:
         json.dump(
             {
                 "type": return_dataset_type,
-                "data_files": list(map(os.path.basename, dataset_dirs)),
-                "world_size": workers_per_file,
+                "data_files": list(map(os.path.basename, filled_dataset_dirs)),
+                # since world_size is vaguely defined when not all workers produce data,
+                # specify the number of processes that were used initially
+                "world_size": num_proc,
                 "batch_size": batch_size,
             },
             info_f,
