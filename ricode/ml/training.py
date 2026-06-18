@@ -1343,7 +1343,7 @@ def do_train(
                             new_best_score,
                         )
 
-                        if new_checkpoint_logic and not keep_complete_checkpointing_history:
+                        if new_checkpoint_logic and not keep_complete_checkpointing_history and new_best_score:
                             parent_folder = Path(model_path)
                             for file_or_folder in os.listdir(parent_folder):
                                 if (
