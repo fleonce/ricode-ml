@@ -282,7 +282,11 @@ class ExperimentWatcher(Generic[TExperimentConfig, TExperiment]):
 
     if is_pandas_available():
 
-        def to_dataframe(self, keys: Sequence[str]) -> pd.DataFrame:
+        def to_dataframe(
+            self,
+            keys: Sequence[str],
+            split: Literal["eval", "test"] = "test",
+        ) -> pd.DataFrame:
             """
             Return the results of the experiment as a DataFrame object.
             Args:
@@ -312,7 +316,8 @@ class ExperimentWatcher(Generic[TExperimentConfig, TExperiment]):
                 with open(experiment_metrics) as f:
                     experiment_json = json.load(f)
 
-                metrics = copy.deepcopy(experiment_json["test_metrics"])
+                key = "test_metrics" if split == "test" else "outcomes"
+                metrics = copy.deepcopy(experiment_json[key])
                 if include_all_keys:
                     for key in metrics.keys():
                         if key not in keys:
@@ -329,7 +334,11 @@ class ExperimentWatcher(Generic[TExperimentConfig, TExperiment]):
 
     else:
 
-        def to_dataframe(self, keys: Sequence[str]) -> NoReturn:
+        def to_dataframe(
+            self,
+            keys: Sequence[str],
+            split: Literal["eval", "test"] = "test",
+        ) -> NoReturn:
             raise ImportError("pandas is not installed")
 
     # @deprecated
@@ -712,7 +721,10 @@ def resolve_wildcard_override_file_path(file_path: str) -> list[str]:
         return [file_path]
     return list(sorted(matched_files))
 
-def resolve_override_configs_for_file_path(file_path: str, stack: Sequence[str]) -> list[Mapping[str, Any]]:
+
+def resolve_override_configs_for_file_path(
+    file_path: str, stack: Sequence[str]
+) -> list[Mapping[str, Any]]:
     configs = resolve_wildcard_override_file_path(file_path)
     overrides = []
     for config in configs:
@@ -750,7 +762,11 @@ def modifiers_from_mapping(
                         overrides = []
                         for override in outer:
                             if isinstance(override, str):
-                                resolved_overrides = resolve_override_configs_for_file_path(override, stack + [key])
+                                resolved_overrides = (
+                                    resolve_override_configs_for_file_path(
+                                        override, stack + [key]
+                                    )
+                                )
                                 overrides.extend(resolved_overrides)
                             else:
                                 overrides.append(override)
@@ -759,7 +775,9 @@ def modifiers_from_mapping(
                     overrides = []
                     for override in value["$overrides"]:
                         if isinstance(override, str):
-                            resolved_overrides = resolve_override_configs_for_file_path(override, stack + [key])
+                            resolved_overrides = resolve_override_configs_for_file_path(
+                                override, stack + [key]
+                            )
                             overrides.extend(resolved_overrides)
                         else:
                             overrides.append(override)
