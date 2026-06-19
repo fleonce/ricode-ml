@@ -37,6 +37,8 @@ from typing import (
 
 import attr
 import attrs
+
+import pandas as pd
 import typing_extensions
 from with_argparse import with_dataclass
 
