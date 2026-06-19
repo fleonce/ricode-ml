@@ -27,7 +27,6 @@ from typing import (
     Generic,
     Literal,
     Mapping,
-    NoReturn,
     Optional,
     Protocol,
     runtime_checkable,
@@ -45,14 +44,8 @@ from ricode.ml.distributed import distributed_rank
 from ricode.ml.training_types import AttrsClass
 from ricode.utils import format_datetime
 from ricode.utils.hashing import mapping_to_hash
-from ricode.utils.imports import is_pandas_available
 from ricode.utils.json_files import load_json_file_type
 from ricode.utils.path import make_path
-
-if is_pandas_available():
-    import pandas as pd
-else:
-    pd = None
 
 
 @dataclass
@@ -280,66 +273,53 @@ class ExperimentWatcher(Generic[TExperimentConfig, TExperiment]):
             if experiment_state == ExperimentStatus.STATUS_NOT_STARTED:
                 yield experiment
 
-    if is_pandas_available():
+    def to_dataframe(
+        self,
+        keys: Sequence[str],
+        split: Literal["eval", "test"] = "test",
+    ) -> pd.DataFrame:
+        """
+        Return the results of the experiment as a DataFrame object.
+        Args:
+            keys: A sequence of keys to be included from the results
 
-        def to_dataframe(
-            self,
-            keys: Sequence[str],
-            split: Literal["eval", "test"] = "test",
-        ) -> pd.DataFrame:
-            """
-            Return the results of the experiment as a DataFrame object.
-            Args:
-                keys: A sequence of keys to be included from the results
+        Returns: the DataFrame
+        """
+        include_all_keys = False
 
-            Returns: the DataFrame
-            """
-            include_all_keys = False
+        keys = list(keys)
+        if len(keys) == 0:
+            include_all_keys = True
 
-            keys = list(keys)
-            if len(keys) == 0:
-                include_all_keys = True
+        for key in attr.fields_dict(type(self.experiment)).keys():
+            if getattr(self.experiment, key):
+                keys = ["experiment___" + key] + keys
 
-            for key in attr.fields_dict(type(self.experiment)).keys():
-                if getattr(self.experiment, key):
-                    keys = ["experiment___" + key] + keys
+        data = {}
+        for experiment in self.compute_run_info():
+            experiment_dir = self.get_experiment_dir(experiment, self.experiment_dir)
+            experiment_metrics = experiment_dir / "metrics.json"
+            if not experiment_metrics.exists():
+                raise ValueError(experiment_metrics)
 
-            data = {}
-            for experiment in self.compute_run_info():
-                experiment_dir = self.get_experiment_dir(
-                    experiment, self.experiment_dir
-                )
-                experiment_metrics = experiment_dir / "metrics.json"
-                if not experiment_metrics.exists():
-                    raise ValueError(experiment_metrics)
+            with open(experiment_metrics) as f:
+                experiment_json = json.load(f)
 
-                with open(experiment_metrics) as f:
-                    experiment_json = json.load(f)
-
-                key = "test_metrics" if split == "test" else "outcomes"
-                metrics = copy.deepcopy(experiment_json[key])
-                if include_all_keys:
-                    for key in metrics.keys():
-                        if key not in keys:
-                            keys.append(key)
-                for key, value in experiment.items():
-                    metrics["experiment___" + key] = value
-                for key in keys:
-                    if key not in data:
-                        data[key] = []
-                    if key not in metrics:
-                        raise ValueError(key, metrics.keys())
-                    data[key].append(metrics[key])
-            return pd.DataFrame.from_dict(data)
-
-    else:
-
-        def to_dataframe(
-            self,
-            keys: Sequence[str],
-            split: Literal["eval", "test"] = "test",
-        ) -> NoReturn:
-            raise ImportError("pandas is not installed")
+            key = "test_metrics" if split == "test" else "outcomes"
+            metrics = copy.deepcopy(experiment_json[key])
+            if include_all_keys:
+                for key in metrics.keys():
+                    if key not in keys:
+                        keys.append(key)
+            for key, value in experiment.items():
+                metrics["experiment___" + key] = value
+            for key in keys:
+                if key not in data:
+                    data[key] = []
+                if key not in metrics:
+                    raise ValueError(key, metrics.keys())
+                data[key].append(metrics[key])
+        return pd.DataFrame.from_dict(data)
 
     # @deprecated
     def summary(self):
