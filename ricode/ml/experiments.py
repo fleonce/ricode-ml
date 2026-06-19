@@ -40,6 +40,7 @@ import attrs
 
 import pandas as pd
 import typing_extensions
+from more_itertools import first
 from with_argparse import with_dataclass
 
 from ricode.ml.distributed import distributed_rank
@@ -275,6 +276,13 @@ class ExperimentWatcher(Generic[TExperimentConfig, TExperiment]):
             if experiment_state == ExperimentStatus.STATUS_NOT_STARTED:
                 yield experiment
 
+    def _get_experiment_keys(self):
+        keys = []
+        for key in attr.fields_dict(type(self.experiment)).keys():
+            if getattr(self.experiment, key):
+                keys = ["experiment___" + key] + keys
+        return list(sorted(keys))
+
     def to_dataframe(
         self,
         keys: Sequence[str],
@@ -293,9 +301,8 @@ class ExperimentWatcher(Generic[TExperimentConfig, TExperiment]):
         if len(keys) == 0:
             include_all_keys = True
 
-        for key in attr.fields_dict(type(self.experiment)).keys():
-            if getattr(self.experiment, key):
-                keys = ["experiment___" + key] + keys
+        for key in self._get_experiment_keys():
+            keys.append("experiment___" + key)
 
         data = {}
         for experiment in self.compute_run_info():
@@ -638,6 +645,10 @@ class HashingExperimentWatcher2(ExperimentWatcher[TExperimentConfig, TExperiment
 
     def compute_run_info(self) -> Generator[OrderedDict[str, Any], None, None]:
         yield from experiment_config_to_override_configs(self.config_path)
+
+    def _get_experiment_keys(self) -> list[str]:
+        first_config = first(experiment_config_to_override_configs(self.config_path))
+        return list(sorted(first_config.keys()))
 
 
 def do_experiments(
