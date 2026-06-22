@@ -424,23 +424,23 @@ def load_checkpoint(
     if not isinstance(model_ckpt, Path):
         model_ckpt = Path(model_ckpt)
 
-    optimizer_state = model_ckpt / "optimizer.bin"
-    if not optimizer_state.exists():
-        warnings.warn(f"Cannot load optimizer state from {optimizer_state}")
-        return 0, 0, None
-
-    state = torch.load(
-        model_ckpt / "optimizer.bin", weights_only=False, map_location=device
-    )
     if load_optimizer_ckpt:
+        optimizer_state = model_ckpt / "optimizer.bin"
+        if not optimizer_state.exists():
+            warnings.warn(f"Cannot load optimizer state from {optimizer_state}")
+            return 0, 0, None
+
+        state = torch.load(
+            model_ckpt / "optimizer.bin", weights_only=False, map_location=device
+        )
+
         warnings.warn(
             f"Loading optimizer and lr scheduler state from {optimizer_state}"
         )
         optimizer.load_state_dict(state["optimizer"])
-    lr_scheduler.load_state_dict(state["lr_scheduler"])
-    generator.set_state(state["generator"].cpu())
+        lr_scheduler.load_state_dict(state["lr_scheduler"])
+        generator.set_state(state["generator"].cpu())
 
-    if load_optimizer_ckpt:
         if "epoch" in state:
             if "step" in state:
                 return (
