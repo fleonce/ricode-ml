@@ -1442,7 +1442,7 @@ def do_train(
                 dirs_exist_ok=True,
             )
 
-        if memory_checkpoints != "full":
+        if memory_checkpoints == True:
             save_checkpoint(
                 args,
                 model,
