@@ -31,7 +31,7 @@ from typing import (
     MutableMapping,
     Optional,
     overload,
-    TypeVar,
+    TypeVar, TypeAlias,
 )
 
 import numpy as np
@@ -122,6 +122,9 @@ THparams = TypeVar("THparams", bound=BasicHparams)
 TMetrics = TypeVar("TMetrics", bound=BasicMetrics)
 
 
+MemoryCheckpointsT: TypeAlias = bool | Literal["full"]
+
+
 def setup_seed(seed: int, strict: bool = True):
     torch.manual_seed(seed)
     torch.cuda.manual_seed(seed)
@@ -148,7 +151,7 @@ def save_checkpoint(
     lr_scheduler: LRScheduler,
     model_path: str,
     disable: bool = False,
-    memory_checkpoints: bool = False,
+    memory_checkpoints: MemoryCheckpointsT = False,
     new_best: bool = False,
 ):
     if not disable:
@@ -464,7 +467,7 @@ def load_model_checkpoint(
     model_init: ModelInitProtocol[TConfig, TModel],
     model_path: Path,
     device: str,
-    memory_checkpoints: bool,
+    memory_checkpoints: MemoryCheckpointsT,
 ) -> TModel:
     if memory_checkpoints:
         if distributed_world_size() == 1:
@@ -829,7 +832,7 @@ def do_train(
     score_comparison: Optional[Callable[[float, float], bool]] = None,
     loss_is_batch_accumulated: bool = False,
     allow_nan_parameters: bool = False,
-    memory_checkpoints: bool = False,
+    memory_checkpoints: MemoryCheckpointsT = False,
     device: Optional[str] = None,
     new_checkpoint_logic: Optional[bool] = True,
     keep_complete_checkpointing_history: Optional[bool] = False,
@@ -875,7 +878,7 @@ def do_train(
     score_comparison: Optional[Callable[[float, float], bool]] = None,
     loss_is_batch_accumulated: bool = False,
     allow_nan_parameters: bool = False,
-    memory_checkpoints: bool = False,
+    memory_checkpoints: MemoryCheckpointsT = False,
     device: Optional[str] = None,
     new_checkpoint_logic: Optional[bool] = True,
     keep_complete_checkpointing_history: Optional[bool] = False,
@@ -922,7 +925,7 @@ def do_train(
     score_comparison: Optional[Callable[[float, float], bool]] = None,
     loss_is_batch_accumulated: bool = False,
     allow_nan_parameters: bool = False,
-    memory_checkpoints: bool = False,
+    memory_checkpoints: MemoryCheckpointsT = False,
     device: Optional[str] = None,
     new_checkpoint_logic: Optional[bool] = True,
     keep_complete_checkpointing_history: Optional[bool] = False,
@@ -1439,7 +1442,7 @@ def do_train(
                 dirs_exist_ok=True,
             )
 
-        if memory_checkpoints:
+        if memory_checkpoints != "full":
             save_checkpoint(
                 args,
                 model,
