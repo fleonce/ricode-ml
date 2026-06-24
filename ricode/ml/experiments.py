@@ -749,7 +749,7 @@ def modifiers_from_mapping(
                 if not isinstance(value["$overrides"], list):
                     raise ValueError(modifier_key, type(value["$overrides"]))
 
-                if isinstance(value["$overrides"], list):
+                if isinstance(value["$overrides"][0], list):
                     # nested lists of overrides
                     for outer in value["$overrides"]:
                         overrides = []
