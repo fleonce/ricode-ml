@@ -31,9 +31,11 @@ from typing import (
     MutableMapping,
     Optional,
     overload,
-    TypeVar, TypeAlias,
+    TypeAlias,
+    TypeVar,
 )
 
+import dill
 import numpy as np
 import torch
 import torch.cuda
@@ -43,8 +45,8 @@ import torch.version
 from more_itertools import first
 from torch import Generator, NoneType
 from torch.distributed.checkpoint.state_dict import (
-    get_model_state_dict,
     get_state_dict,
+    set_state_dict,
     StateDictOptions,
 )
 from torch.nn import Module
@@ -62,6 +64,7 @@ from ricode.ml._training.utils import (
     _get_default_device,
     estimated_model_size,
     format_to_energy_usage,
+    get_dataset_name,
     num_gradient_parameters,
     num_local_parameters,
     num_parameters,
@@ -144,6 +147,36 @@ def setup_reproducible():
 _checkpoint_state_dict = OrderedDict()
 
 
+def _save_checkpoint_in_memory(
+    model: PreTrainedModel,
+    optimizer: Optimizer,
+):
+    if distributed_world_size() > 1:
+        raise NotImplementedError("memory checkpointing with >1 gpus")
+
+    do_cpu_offload = distributed_world_size() > 1
+    options = StateDictOptions(full_state_dict=True, cpu_offload=do_cpu_offload)
+    model_state_dict, optimizer_state_dict = get_state_dict(
+        model, optimizer, options=options
+    )
+
+    _checkpoint_state_dict["model"] = model_state_dict
+    _checkpoint_state_dict["optimizer"] = optimizer_state_dict
+
+
+def _load_checkpoint_from_memory(model: PreTrainedModel, optimizer: Optimizer):
+    model_state_dict = _checkpoint_state_dict["model"]
+    optimizer_state_dict = _checkpoint_state_dict["optimizer"]
+
+    set_state_dict(
+        model,
+        optimizer,
+        model_state_dict=model_state_dict,
+        optim_state_dict=optimizer_state_dict,
+    )
+    return model
+
+
 def save_checkpoint(
     args: TrainingArgs[THparams, TDataset],
     model: TModel,
@@ -159,14 +192,7 @@ def save_checkpoint(
             if not new_best:
                 return
 
-            local_state_dict = get_model_state_dict(model)
-            local_state_dict = {
-                key: value.clone() for key, value in local_state_dict.items()
-            }
-            _checkpoint_state_dict["state_dict"] = local_state_dict
-
-            if args.job_config.parallelize.dp_mode != "none":
-                dist.barrier()
+            _save_checkpoint_in_memory(model, optimizer)
             return
 
         model_dir = Path(model_path)
@@ -216,13 +242,13 @@ def setup_model_path(
             "use train.py with --model_path or run_experiment with --log_ckpts"
         )
     if model_name is None:
-        basename = f"models/{dataset.name}"
+        basename = f"models/{get_dataset_name(dataset)}"
     else:
         model_as_path = Path(model_name)
         if model_as_path.is_dir() and model_as_path.exists():
-            basename = f"models/{dataset.name}/local_{model_as_path.name}"
+            basename = f"models/{get_dataset_name(dataset)}/local_{model_as_path.name}"
         else:
-            basename = f"models/{dataset.name}/{model_name}"
+            basename = f"models/{get_dataset_name(dataset)}/{model_name}"
     return _get_model_path(basename)
 
 
@@ -307,7 +333,7 @@ def reproducibility_logging(
             "pytorch_git": torch.version.git_version,
             "git": get_commit_hash(),
             "seed": seed,
-            "dataset": dataset.name,
+            "dataset": get_dataset_name(dataset),
             **conf_to_mapping(hparams),
         },
         disable=not use_tensorboard,
@@ -401,7 +427,7 @@ def write_reproducibility_checkpoint(
     with open(f"{model_path}/requirements.txt", "w") as f:
         subprocess.run([sys.executable, *"-m pip freeze".split()], stdout=f)
 
-    torch.save(repro_dict, f"{model_path}/repro.pt")
+    torch.save(repro_dict, f"{model_path}/repro.pt", pickle_module=dill)
     with open(f"{model_path}/hparams.json", "w") as f:
         f.write(args.hparams.to_json() + "\n")
 
@@ -463,6 +489,7 @@ def load_checkpoint(
 
 def load_model_checkpoint(
     model: TModel,
+    optimizer: Optimizer,
     config: TConfig,
     model_init: ModelInitProtocol[TConfig, TModel],
     model_path: Path,
@@ -470,10 +497,7 @@ def load_model_checkpoint(
     memory_checkpoints: MemoryCheckpointsT,
 ) -> TModel:
     if memory_checkpoints:
-        if distributed_world_size() == 1:
-            model.load_state_dict(_checkpoint_state_dict["state_dict"])
-        else:
-            torch.distributed.checkpoint.load(_checkpoint_state_dict["state_dict"])
+        _load_checkpoint_from_memory(model, optimizer)
         return model
     else:
         del model
@@ -553,13 +577,13 @@ def forward_backward(
     # (3) finally, the backward pass
     loss.backward()
 
+    out_info = OrderedDict(loss=loss.detach())
     # (4) statistics: calculate the number of tokens in this batch
-    num_tokens = batch.attention_mask.sum().item()
+    if "attention_mask" in batch:
+        num_tokens = batch.attention_mask.sum().item()
+        out_info["num_tokens"] = num_tokens
 
-    return OrderedDict(
-        loss=loss.detach(),
-        batch_tokens=num_tokens,
-    )
+    return out_info
 
 
 def check_parameters_for_nan(model: TModel, strict: bool):
@@ -1024,7 +1048,9 @@ def do_train(
     )
 
     if config_init_fn is None:
-        config_init_fn = config_class
+
+        def config_init_fn(c, h):
+            return config_class()
 
     config = config_init_fn(dataset, hparams)
 
@@ -1346,7 +1372,11 @@ def do_train(
                             new_best_score,
                         )
 
-                        if new_checkpoint_logic and not keep_complete_checkpointing_history and new_best_score:
+                        if (
+                            new_checkpoint_logic
+                            and not keep_complete_checkpointing_history
+                            and new_best_score
+                        ):
                             parent_folder = Path(model_path)
                             for file_or_folder in os.listdir(parent_folder):
                                 if (
@@ -1355,10 +1385,16 @@ def do_train(
                                     and file_or_folder.count("-") == 1
                                 ):
                                     try:
-                                        step_count = int(file_or_folder.split("-", 1)[1])
+                                        step_count = int(
+                                            file_or_folder.split("-", 1)[1]
+                                        )
                                         if step_count < args.train_steps:
-                                            logger.info(f"Cleaning up old checkpoint directory {parent_folder / file_or_folder}")
-                                            shutil.rmtree(parent_folder / file_or_folder)
+                                            logger.info(
+                                                f"Cleaning up old checkpoint directory {parent_folder / file_or_folder}"
+                                            )
+                                            shutil.rmtree(
+                                                parent_folder / file_or_folder
+                                            )
                                     except ValueError:
                                         # ignore parsing errors
                                         pass
@@ -1427,6 +1463,7 @@ def do_train(
 
         model = load_model_checkpoint(
             model,
+            optimizer,
             config,
             model_init,
             checkpoint_path,
@@ -1442,7 +1479,7 @@ def do_train(
                 dirs_exist_ok=True,
             )
 
-        if memory_checkpoints == True:
+        if isinstance(memory_checkpoints, bool) and memory_checkpoints:
             save_checkpoint(
                 args,
                 model,
@@ -1726,33 +1763,8 @@ def _save_loss_plot(
                         if len(score_history) % 2 == 0
                         else (1 if len(score_history) <= 1 else 3)
                     ),
-                },
-                {
-                    "left": ["_eval_power", "_power_per_epoch"],
-                    "left_label": "Watts",
-                    "left_bounds": (0.1, None),
-                    "left_scale": "linear",
-                    "left_labels": ["Training Power Draw"],
-                    "left_fmts": ["*-"],
-                    "left_margin": None,
-                    "left_scales": [1e-3],
-                    "left_colors": ["black"],
-                    "right": ["_gpu_util_per_epoch", "_memory_util_per_epoch"],
-                    "right_label": "Utilization (%)",
-                    "right_bounds": (-5, 105),
-                    "right_scale": "linear",
-                    "right_labels": ["Train GPU Util", "Train VRAM Util"],
-                    "right_fmts": ["o--m", ".:c"],
-                    "right_margin": None,
-                    "ncol": (
-                        3
-                        if len(score_history) % 2 == 0
-                        else (1 if len(score_history) <= 1 else 3)
-                    ),
-                },
+                }
             ]
-        if platform.system() == "Darwin":
-            plots.pop()  # if on mac the power keys do not exist
 
         fig, axis = plt.subplots(
             1,

@@ -1,5 +1,5 @@
 import math
-from typing import Callable
+from typing import Any, Callable
 
 import torch.nn
 from torch.distributed.tensor import DTensor
@@ -113,3 +113,7 @@ def _format_to_percentage(inp: int):
 
 def _get_default_device():
     return "cpu" if not torch.cuda.is_available() else "cuda:0"
+
+
+def get_dataset_name(obj: Any):
+    return getattr(obj, "name", "placeholder")

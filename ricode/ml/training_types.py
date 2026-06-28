@@ -189,8 +189,6 @@ class HasDatasetProperties(Protocol):
     Required for training
     """
 
-    name: str
-
     def __getitem__(self, item: str) -> VALID_DATASET_TYPES: ...
 
 
