@@ -12,7 +12,7 @@ class TemporaryDirectory:
     delete_at: Literal["context-exit", "exit"] = "exit"
     name: str = attrs.field(default=None, init=False)
 
-    def __enter__(self):
+    def __enter__(self) -> str:
         self.name = mkdtemp()
         if self.delete_at == "exit":
             atexit.register(shutil.rmtree, self.name)
