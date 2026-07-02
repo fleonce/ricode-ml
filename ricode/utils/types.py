@@ -1,4 +1,4 @@
-from typing import Generator, NoReturn, Protocol, runtime_checkable, TypeVar
+from typing import Any, Generator, NoReturn, Protocol, runtime_checkable, TypeVar
 
 _T = TypeVar("_T")
 
@@ -11,4 +11,4 @@ def raise_if_none(t: _T | None) -> _T | NoReturn:
 
 @runtime_checkable
 class ReturnsGeneratorProtocol(Protocol[_T]):
-    def __call__(self, **kwargs) -> Generator[_T, None, None]: ...
+    def __call__(self, **kwargs: Any) -> Generator[_T, None, None]: ...

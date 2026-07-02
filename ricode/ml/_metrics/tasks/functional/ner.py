@@ -324,7 +324,7 @@ def word_sample_to_spans_sample(
     error_handling: ErrorHandlingT,
 ) -> JsonSample:
     def _is_str(x: str | int) -> str:
-        assert isinstance(x, str)
+        assert isinstance(x, str), x
         return x
 
     tags = [_is_str(tag) for tag in sample["tags"]]
